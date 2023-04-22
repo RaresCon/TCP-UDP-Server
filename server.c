@@ -9,35 +9,35 @@
 #include <sys/epoll.h>
 #include <unistd.h>
 #include <errno.h>
+#include "server.h"
 
 #define MAXCONNS 100
 #define BACKLOG 200
 #define STD_RETRIES 10
 
-int current_port = -1;
+int16_t current_port = -1;
 
 int main(int argc, char *argv[])
 {
 	int rc;
-	int tcp_sockfd, udp_sockfd, epoll_fd, new_fd, kdpfd, nfds, n, curfds;
+	int tcp_sockfd, udp_sockfd, epoll_fd;
     struct sockaddr_in servaddr;
-	struct sockaddr_in client_addr;
 	struct epoll_event ev;
-	struct epoll_event *events;
-	socklen_t addr_size;
+	struct epoll_event *events_list;
 
 	if (argc != 2) {
-		fprintf(stderr, "usage: ./server <PORT>\n");
+		fprintf(stderr, "usage: %s <PORT>\n", argv[0]);
 		return 1;
 	}
     current_port = atoi(argv[1]);
+	printf("%d\n", current_port);
 
     epoll_fd = epoll_create(MAXCONNS);
 
     memset(&servaddr, 0, sizeof(servaddr));
     servaddr.sin_family = AF_INET; // IPv4
     servaddr.sin_addr.s_addr = INADDR_ANY;
-    servaddr.sin_port = htonl(current_port);
+    servaddr.sin_port = htons(current_port);
 
     /* TCP Socket INIT */
 
@@ -47,10 +47,20 @@ int main(int argc, char *argv[])
             retries--;
         }
         if (!retries) {
-            fprintf(stderr, "Socket couldn't be created... Aborting!\n");
+            perror("socket(SOCK_STREAM) failed. Aborting...\n");
             exit(2);
         }
     }
+
+	/* Setting TCP Socket as non-blocking */
+	int current_tcp_flags = fcntl(tcp_sockfd, F_GETFL, 0);
+	if (current_tcp_flags == -1) {
+		perror("fcntl(F_GETFL) failed.");
+		exit(2);
+	} else if (fcntl(tcp_sockfd, F_SETFL, current_tcp_flags | O_NONBLOCK) == -1) {
+		perror("fcntl(F_SETFL) failed.");
+		exit(2);
+	}
 
     int enable = 1;
     if (setsockopt(tcp_sockfd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) < 0) {
@@ -63,6 +73,7 @@ int main(int argc, char *argv[])
             retries--;
         }
         if (!retries) {
+			perror("bind() failed. Aborting...\n");
             exit(2);
         }
     }
@@ -74,80 +85,130 @@ int main(int argc, char *argv[])
             retries--;
         }
         if (!retries) {
+			perror("listen() failed. Aborting...\n");
             exit(2);
         }
 	}
 
+	ev.events = EPOLLIN;
 	ev.data.fd = tcp_sockfd;
-	if(epoll_ctl(kdpfd, EPOLL_CTL_ADD, tcp_sockfd, &ev) < 0)
-	{
-		fprintf(stderr, "epoll set insert error.");
-		return -1;
-	} else {
-		printf("success insert listening socket into epoll.\n");
+	if(epoll_ctl(epoll_fd, EPOLL_CTL_ADD, tcp_sockfd, &ev) < 0) {
+		int retries = STD_RETRIES;
+        while (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, tcp_sockfd, &ev) < 0 && retries) {
+            retries--;
+        }
+        if (!retries) {
+			perror("epoll_ctl(EPOLL_CTL_ADD) failed. Aborting...\n");
+            exit(2);
+        }
 	}
 
-	printf("server: waiting for connections...\n");
+	/* UDP Socket INIT */
 
-	ev.events = EPOLLIN|EPOLLET;
-	ev.data.fd = tcp_sockfd;
-	if(epoll_ctl(kdpfd, EPOLL_CTL_ADD, tcp_sockfd, &ev) < 0) {
-		fprintf(stderr, "epoll set insert error.");
-		return -1;
-	} else {
-		printf("success insert listening socket into epoll.\n");
+    if ((udp_sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+        int retries = STD_RETRIES;
+        while ((udp_sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0 && retries) {
+            retries--;
+        }
+        if (!retries) {
+            perror("socket(SOCK_DGRAM) failed. Aborting...\n");
+            exit(2);
+        }
+    }
+
+	if (setsockopt(udp_sockfd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) < 0) {
+        perror("SO_REUSEADDR");
+    }
+
+    if (bind(udp_sockfd, (const struct sockaddr *)&servaddr, sizeof(servaddr)) < 0) {
+        int retries = STD_RETRIES;
+        while (bind(udp_sockfd, (const struct sockaddr *)&servaddr, sizeof(servaddr)) < 0 && retries) {
+            retries--;
+        }
+        if (!retries) {
+			perror("bind() failed. Aborting...\n");
+            exit(2);
+        }
+    }
+
+	ev.events = EPOLLIN;
+	ev.data.fd = udp_sockfd;
+	if(epoll_ctl(epoll_fd, EPOLL_CTL_ADD, udp_sockfd, &ev) < 0) {
+		int retries = STD_RETRIES;
+        while (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, udp_sockfd, &ev) < 0 && retries) {
+            retries--;
+        }
+        if (!retries) {
+			perror("epoll_ctl(EPOLL_CTL_ADD) failed. Aborting...\n");
+            exit(2);
+        }
 	}
-	events = calloc (MAXEPOLLSIZE, sizeof ev);
-	curfds = 1;
-	while(1) 
-	{ //loop for accept incoming connection
 
-		nfds = epoll_wait(kdpfd, events, curfds, -1);
-		if(nfds == -1)
-		{
-			perror("epoll_wait");
+	ev.events = EPOLLIN;
+	ev.data.fd = STDIN_FILENO;
+	if(epoll_ctl(epoll_fd, EPOLL_CTL_ADD, STDIN_FILENO, &ev) < 0) {
+		int retries = STD_RETRIES;
+        while (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, STDIN_FILENO, &ev) < 0 && retries) {
+            retries--;
+        }
+        if (!retries) {
+			perror("epoll_ctl(EPOLL_CTL_ADD) failed. Aborting...\n");
+            exit(2);
+        }
+	}
+
+	events_list = calloc (MAXCONNS, sizeof(ev));
+	while (1) { //loop for accept incoming connection
+		printf("waiting for events\n");
+		int num_of_events = epoll_wait(epoll_fd, events_list, MAXCONNS, 2000);
+		if(num_of_events == -1) {
+			perror("epoll_wait() failed. Aborting...");
 			break;
-		}		
-		for (n = 0; n < nfds; ++n)
-		{
-			if(events[n].data.fd == sockfd){
-				addr_size = sizeof client_addr;
-				new_fd = accept(events[n].data.fd, (struct sockaddr *)&client_addr, &addr_size);
-				if (new_fd == -1)
-				{
-					if((errno == EAGAIN) ||
-						 (errno == EWOULDBLOCK))
-					{
+		} else if (!num_of_events) {
+			
+		}
+
+		for (int i = 0; i < num_of_events; i++) {
+			if(events_list[i].data.fd == tcp_sockfd){
+				struct sockaddr_in new_client_addr;
+				socklen_t addr_size = sizeof(struct sockaddr_in);
+				int new_client_fd = accept(events_list[i].data.fd,
+										   (struct sockaddr *) &new_client_addr,
+										   &addr_size);
+
+				if (new_client_fd == -1) {
+					if(errno == EAGAIN || errno == EWOULDBLOCK) {
+						break;
+					} else {
+						perror("accept(new_client) fails. Aborting...");
 						break;
 					}
-					else
-					{
-						perror("accept");
-						break;
-					}
 				}
-				printf("server: connection established...\n");
-				set_non_blocking(new_fd);
-				ev.events = EPOLLIN|EPOLLET;
-				ev.data.fd = new_fd;
-				if(epoll_ctl(kdpfd,EPOLL_CTL_ADD, new_fd, &ev)<0)
-				{
-					printf("Failed to insert socket into epoll.\n");
+
+				ev.events = EPOLLIN;
+				ev.data.fd = new_client_fd;
+				if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, new_client_fd, &ev) < 0) {
+					//printf("Failed to insert socket into epoll.\n");
 				}
-				curfds++;
-			} else {
-				if(send(events[n].data.fd, "Hello, world!", 13, 0) == -1)
-				{
-					perror("send");
-					break;
+			} else if (events_list[i].data.fd == udp_sockfd) {
+				struct sockaddr_in udp_client;
+				socklen_t addr_size = sizeof(struct sockaddr_in);
+
+				struct udp_packet new_content;
+				int rc = recvfrom(udp_sockfd, &new_content,
+								  sizeof(new_content), 0,
+								  (struct sockaddr *) &udp_client, &addr_size);
+				
+				if (rc < 0) {
+					perror("recvfrom() failed.");
 				}
-				epoll_ctl(kdpfd, EPOLL_CTL_DEL, events[n].data.fd, &ev);
-				curfds--;
-				close(events[n].data.fd);
 			}
 		}
 	}
-	free(events);
-	close(sockfd);			
+
+	free(events_list);
+	close(tcp_sockfd);
+	close(udp_sockfd);
+	
 	return 0;
 }
