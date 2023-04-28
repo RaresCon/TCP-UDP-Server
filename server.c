@@ -11,18 +11,35 @@
 #include <unistd.h>
 #include <errno.h>
 #include "server.h"
+#include "list.h"
 
 #define MAXCONNS 100
 #define BACKLOG 200
 #define STD_RETRIES 10
 
 int16_t current_port = -1;
+linked_list_t *registered_users;
+
+int check_client(char *id) {
+	ll_node_t *head = registered_users->head;
+
+	while (head) {
+		struct client *curr_client = (struct client*)head->data;
+		if (!strcmp(curr_client->id, id)) {
+			return 1;
+		}
+		head = head->next;
+	}
+
+	return 0;
+}
 
 int main(int argc, char *argv[])
 {
 	setvbuf(stdout, NULL, _IONBF, BUFSIZ);
 	int rc;
 	int tcp_sockfd, udp_sockfd, epoll_fd;
+	registered_users = ll_create(sizeof(client));
     struct sockaddr_in servaddr;
 	struct epoll_event ev;
 	struct epoll_event *events_list;
@@ -192,13 +209,26 @@ int main(int argc, char *argv[])
 					}
 				}
 
-				char new_client[10];
-				recv(new_client_fd, new_client, 10, 0);
-				send(new_client_fd, new_client, strlen(new_client) + 1, 0);
+				char client_id[11];
+				recv(new_client_fd, client_id, 10, 0);
+				if (check_client(client_id)) {
+					printf("Client %s already connected.\n", client_id);
+					strcpy(client_id, "");
+					send(new_client_fd, client_id, 1, 0);
+					continue;
+				}
 
+				send(new_client_fd, client_id, strlen(client_id) + 1, 0);
+
+				struct client *new_client = calloc(1, sizeof(struct client));
+				new_client->serv_conned = 1;
+				strcpy(new_client->id, client_id);
+				new_client->fd = new_client_fd;
+
+				ll_add_nth_node(registered_users, ll_get_size(registered_users), new_client);
 				ev.events = EPOLLIN;
-				ev.data.fd = new_client_fd;
-				if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, new_client_fd, &ev) < 0) {
+				ev.data.ptr = new_client;
+				if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, new_client->fd, &ev) < 0) {
 					printf("Failed to insert socket into epoll.\n");
 				}
 
@@ -208,7 +238,7 @@ int main(int argc, char *argv[])
 					exit(2);
 				}
 
-				printf("New client %s connected from %s:%d.\n", new_client, ip_addr, new_client_addr.sin_port);
+				printf("New client %s connected from %s:%d.\n", new_client->id, ip_addr, new_client_addr.sin_port);
 			} else if (events_list[i].data.fd == udp_sockfd) {
 				struct sockaddr_in udp_client;
 				socklen_t addr_size = sizeof(struct sockaddr_in);
@@ -237,12 +267,14 @@ int main(int argc, char *argv[])
 
 				return 0;
 			} else {
+				struct client *curr_client = (struct client*)events_list[i].data.ptr;
 				int test;
-				rc = recv(events_list[i].data.fd, &test, sizeof(test), 0);
+				rc = recv(curr_client->fd, &test, sizeof(test), 0);
 
 				if (!rc) {
-					epoll_ctl(epoll_fd, EPOLL_CTL_DEL, events_list[i].data.fd, &ev);
-					printf("Client disconnected.\n");
+					printf("Client %s disconnected.\n", curr_client->id);
+					epoll_ctl(epoll_fd, EPOLL_CTL_DEL, events_list[i].data.fd, NULL);
+					close(curr_client->fd);
 				}
 			}
 		}

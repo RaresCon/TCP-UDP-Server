@@ -21,6 +21,10 @@ int verify_id(char *id, int tcp_sockfd)
     send(tcp_sockfd, id, strlen(id) + 1, 0);
     recv(tcp_sockfd, id, strlen(id) + 1, 0);
 
+    if (!strlen(id)) {
+        return 1;
+    }
+
     printf("Client should be registered\n");
     return 0;
 }
@@ -154,11 +158,12 @@ int main(int argc, char *argv[])
         }
     }
 
-    if ((rc = verify_id(argv[1], tcp_sockfd)) == 1) {
+    if ((rc = verify_id(strdup(argv[1]), tcp_sockfd)) == 1) {
         fprintf(stderr, "Client %s already connected.\n", argv[1]);
 
         close(tcp_sockfd);
         close(epoll_fd);
+        free(events_list);
 
         return 1;
     }

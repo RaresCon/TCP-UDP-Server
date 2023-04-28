@@ -7,7 +7,8 @@
 
 struct client {
     char id[11];
-    
+    uint32_t fd;
+    uint8_t serv_conned;
 } client;
 
 struct command_header {
