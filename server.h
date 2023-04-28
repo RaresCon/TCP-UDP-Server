@@ -5,6 +5,17 @@
 #include <string.h>
 #include <netdb.h>
 
+struct client {
+    char id[11];
+    
+} client;
+
+struct command_header {
+    uint8_t opcode;
+    uint8_t option_sf;
+    uint16_t topic_len;
+} command_header;
+
 struct udp_packet {
     char topic[50];
     uint8_t type;

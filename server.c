@@ -1,3 +1,4 @@
+#include <arpa/inet.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <sys/types.h>
@@ -19,6 +20,7 @@ int16_t current_port = -1;
 
 int main(int argc, char *argv[])
 {
+	setvbuf(stdout, NULL, _IONBF, BUFSIZ);
 	int rc;
 	int tcp_sockfd, udp_sockfd, epoll_fd;
     struct sockaddr_in servaddr;
@@ -26,10 +28,16 @@ int main(int argc, char *argv[])
 	struct epoll_event *events_list;
 
 	if (argc != 2) {
-		fprintf(stderr, "usage: %s <PORT>\n", argv[0]);
+		fprintf(stderr, "Usage: %s <PORT>\n", argv[0]);
 		return 1;
 	}
+
     current_port = atoi(argv[1]);
+	if (!current_port) {
+		perror("Invalid server port. Aborting...\n");
+		exit(2);
+	}
+
 	printf("%d\n", current_port);
 
     epoll_fd = epoll_create(MAXCONNS);
@@ -157,9 +165,8 @@ int main(int argc, char *argv[])
         }
 	}
 
-	events_list = calloc (MAXCONNS, sizeof(ev));
-	while (1) { //loop for accept incoming connection
-		printf("waiting for events\n");
+	events_list = calloc(MAXCONNS, sizeof(ev));
+	while (1) {
 		int num_of_events = epoll_wait(epoll_fd, events_list, MAXCONNS, 2000);
 		if(num_of_events == -1) {
 			perror("epoll_wait() failed. Aborting...");
@@ -185,11 +192,23 @@ int main(int argc, char *argv[])
 					}
 				}
 
+				char new_client[10];
+				recv(new_client_fd, new_client, 10, 0);
+				send(new_client_fd, new_client, strlen(new_client) + 1, 0);
+
 				ev.events = EPOLLIN;
 				ev.data.fd = new_client_fd;
 				if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, new_client_fd, &ev) < 0) {
-					//printf("Failed to insert socket into epoll.\n");
+					printf("Failed to insert socket into epoll.\n");
 				}
+
+				char ip_addr[30];
+				if (!inet_ntop(AF_INET, &new_client_addr.sin_addr, ip_addr, addr_size)) {
+					perror("inet_ntop() failed. Aborting...\n");
+					exit(2);
+				}
+
+				printf("New client %s connected from %s:%d.\n", new_client, ip_addr, new_client_addr.sin_port);
 			} else if (events_list[i].data.fd == udp_sockfd) {
 				struct sockaddr_in udp_client;
 				socklen_t addr_size = sizeof(struct sockaddr_in);
@@ -202,6 +221,29 @@ int main(int argc, char *argv[])
 				if (rc < 0) {
 					perror("recvfrom() failed.");
 				}
+			} else if (events_list[i].data.fd == STDIN_FILENO) {
+				char command[BUFSIZ];
+				fgets(command, BUFSIZ, stdin);
+
+				if (strlen(command) != 5 || strcmp(command, "exit\n")) {
+					printf("Invalid command. Please try again.\n");
+					continue;
+				}
+
+				free(events_list);
+				close(tcp_sockfd);
+				close(udp_sockfd);
+				close(epoll_fd);
+
+				return 0;
+			} else {
+				int test;
+				rc = recv(events_list[i].data.fd, &test, sizeof(test), 0);
+
+				if (!rc) {
+					epoll_ctl(epoll_fd, EPOLL_CTL_DEL, events_list[i].data.fd, &ev);
+					printf("Client disconnected.\n");
+				}
 			}
 		}
 	}
@@ -209,6 +251,7 @@ int main(int argc, char *argv[])
 	free(events_list);
 	close(tcp_sockfd);
 	close(udp_sockfd);
+	close(epoll_fd);
 	
 	return 0;
 }
