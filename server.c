@@ -20,7 +20,7 @@
 int16_t current_port = -1;
 linked_list_t *registered_users;
 
-int check_client(char *id) {
+int verify_new_id(char *id) {
 	ll_node_t *head = registered_users->head;
 
 	while (head) {
@@ -36,7 +36,7 @@ int check_client(char *id) {
 
 int main(int argc, char *argv[])
 {
-	setvbuf(stdout, NULL, _IONBF, BUFSIZ);
+	//setvbuf(stdout, NULL, _IONBF, BUFSIZ);
 	int rc;
 	int tcp_sockfd, udp_sockfd, epoll_fd;
 	registered_users = ll_create(sizeof(client));
@@ -209,20 +209,47 @@ int main(int argc, char *argv[])
 					}
 				}
 
-				char client_id[11];
-				recv(new_client_fd, client_id, 10, 0);
-				if (check_client(client_id)) {
-					printf("Client %s already connected.\n", client_id);
-					strcpy(client_id, "");
-					send(new_client_fd, client_id, 1, 0);
+				struct command_hdr check_client;
+				recv(new_client_fd, &check_client, sizeof(struct command_hdr), 0);
+
+				if (check_client.opcode == ERR) {
+					fprintf(stderr, "Error opcode.\n");
+
+					close(new_client_fd);
+					continue;
+				} else if (check_client.opcode != CHECK_ID) {
+					fprintf(stderr, "Invalid opcode.\n");
+
+					check_client.opcode = ERR;
+					check_client.option_sf = 0;
+					check_client.buf_len = 0;
+					send(new_client_fd, &check_client, sizeof(struct command_hdr), 0);
+					close(new_client_fd);
 					continue;
 				}
 
-				send(new_client_fd, client_id, strlen(client_id) + 1, 0);
+				char *buf = malloc(check_client.buf_len);
+				recv(new_client_fd, buf, check_client.buf_len, 0);
+
+				if (verify_new_id(buf)) {
+					printf("Client %s already connected.\n", buf);
+					check_client.opcode = ERR;
+					check_client.option_sf = 0;
+					check_client.buf_len = 0;
+
+					send(new_client_fd, &check_client, sizeof(struct command_hdr), 0);
+					close(new_client_fd);
+					continue;
+				}
+
+				check_client.opcode = OK;
+				check_client.option_sf = 0;
+				check_client.buf_len = 0;
+				send(new_client_fd, &check_client, sizeof(struct command_hdr), 0);
 
 				struct client *new_client = calloc(1, sizeof(struct client));
 				new_client->serv_conned = 1;
-				strcpy(new_client->id, client_id);
+				strcpy(new_client->id, buf);
 				new_client->fd = new_client_fd;
 
 				ll_add_nth_node(registered_users, ll_get_size(registered_users), new_client);

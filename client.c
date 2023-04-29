@@ -18,10 +18,17 @@ int16_t current_port = -1;
 
 int verify_id(char *id, int tcp_sockfd)
 {
-    send(tcp_sockfd, id, strlen(id) + 1, 0);
-    recv(tcp_sockfd, id, strlen(id) + 1, 0);
+    struct command_hdr check_client;
+    check_client.opcode = CHECK_ID;
+    check_client.option_sf = 0;
+    check_client.buf_len = strlen(id) + 1;
 
-    if (!strlen(id)) {
+    send(tcp_sockfd, &check_client, sizeof(struct command_hdr), 0);
+    send(tcp_sockfd, id, check_client.buf_len, 0);
+
+    recv(tcp_sockfd, &check_client, sizeof(struct command_hdr), 0);
+
+    if (check_client.opcode == (uint8_t) ERR) {
         return 1;
     }
 
@@ -76,7 +83,7 @@ comm_type parse_command(char *comm, char **tokens)
 
 int main(int argc, char *argv[])
 {
-    setvbuf(stdout, NULL, _IONBF, BUFSIZ);
+    //setvbuf(stdout, NULL, _IONBF, BUFSIZ);
     int rc;
 	int tcp_sockfd, udp_sockfd, epoll_fd;
     struct sockaddr_in servaddr;

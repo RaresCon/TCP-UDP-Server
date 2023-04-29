@@ -7,7 +7,9 @@
 
 typedef enum comm_type {
     ERR = -1,
-    EXIT = 1,
+    OK,
+    EXIT,
+    CHECK_ID,
     SUBSCRIBE,
     UNSUBSCRIBE,
 } comm_type;
@@ -16,8 +18,8 @@ struct client {
     
 } client;
 
-struct command {
+struct command_hdr {
     uint8_t opcode;
     uint8_t option_sf;
-    uint16_t topic_len;
-} command;
+    uint16_t buf_len;
+} __attribute__((__packed__)) command_hdr;

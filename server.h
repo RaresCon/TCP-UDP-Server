@@ -5,17 +5,26 @@
 #include <string.h>
 #include <netdb.h>
 
+typedef enum comm_type {
+    ERR = -1,
+    OK,
+    EXIT,
+    CHECK_ID,
+    SUBSCRIBE,
+    UNSUBSCRIBE,
+} comm_type;
+
 struct client {
     char id[11];
     uint32_t fd;
     uint8_t serv_conned;
-} client;
+} __attribute__((__packed__)) client ;
 
-struct command_header {
+struct command_hdr {
     uint8_t opcode;
     uint8_t option_sf;
-    uint16_t topic_len;
-} command_header;
+    uint16_t buf_len;
+} __attribute__((__packed__)) command_hdr ;
 
 struct udp_packet {
     char topic[50];
