@@ -86,18 +86,15 @@ int verify_id(char *id, int tcp_sockfd)
 
         for (int i = 0; i < topics_no; i++) {
             struct subbed_topic curr_topic;
-            uint8_t sf;
-            uint8_t id;
             int len;
-            char buf[51];
 
-            recv(tcp_sockfd, &id, sizeof(uint8_t), 0);
-            recv(tcp_sockfd, &sf, sizeof(uint8_t), 0);
+            recv(tcp_sockfd, &curr_topic.info.id, sizeof(uint8_t), 0);
+            recv(tcp_sockfd, &curr_topic.sf, sizeof(uint8_t), 0);
             recv(tcp_sockfd, &len, sizeof(int), 0);
 
-            printf("%hhd %hhd %d\n", id, sf, len);
+            recv(tcp_sockfd, curr_topic.info.topic_name, len, 0);
 
-            recv(tcp_sockfd, buf, len, 0);
+            ll_add_nth_node(subbed_topics, 0, &curr_topic);
         }
     }
 

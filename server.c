@@ -27,7 +27,7 @@ int verify_new_id(char *id)
 	ll_node_t *head = registered_users->head;
 
 	while (head) {
-		struct client *curr_client = (struct client*)head->data;
+		struct client *curr_client = *((struct client**)head->data);
 		if (!strcmp(curr_client->id, id) && curr_client->serv_conned) {
 			return -1;
 		} else if (!strcmp(curr_client->id, id)) {
@@ -45,7 +45,7 @@ struct client *get_client(char *id)
 	ll_node_t *head = registered_users->head;
 
 	while (head) {
-		struct client *curr_client = (struct client*)head->data;
+		struct client *curr_client = *((struct client**)head->data);
 		if (!strcmp(curr_client->id, id)) {
 			return curr_client;
 		}
@@ -55,46 +55,28 @@ struct client *get_client(char *id)
 	return NULL;
 }
 
-void send_subbed_topics(char *id, int new_fd)
+void send_subbed_topics(struct client *curr_client)
 {
-	struct client *curr_client = get_client(id);
 	if (curr_client) {
-		printf("%s\n", curr_client->id);
-	}
-
-	if (curr_client) {
-		curr_client->fd = new_fd;
 		int topics_no = ll_get_size(curr_client->client_topics);
 		ll_node_t *head = curr_client->client_topics->head;
 		send(curr_client->fd, &topics_no, sizeof(int), 0);
+
 		for (int i = 0; i < topics_no; i++) {
-			struct subbed_topic *curr_topic = (struct subbed_topic *)head;
+			struct subbed_topic *curr_topic = (struct subbed_topic *)head->data;
 
 			uint8_t id = curr_topic->info.id;
 			uint8_t sf = curr_topic->sf;
 			int len = strlen(curr_topic->info.topic_name) + 1;
-			printf("%hhd %hhd %d\n", id, sf, len);
 
 			send(curr_client->fd, &id, sizeof(uint8_t), 0);
 			send(curr_client->fd, &sf, sizeof(uint8_t), 0);
 			send(curr_client->fd, &len, sizeof(int), 0);
 
 			send(curr_client->fd, curr_topic->info.topic_name, len, 0);
-		}
-	}
-}
 
-void disconn_client(char *id)
-{
-	ll_node_t *head = registered_users->head;
-
-	while (head) {
-		struct client *curr_client = (struct client*)head->data;
-		if (!strcmp(curr_client->id, id)) {
-			curr_client->serv_conned = 0;
-			return;
+			head = head->next;
 		}
-		head = head->next;
 	}
 }
 
@@ -113,12 +95,12 @@ int add_new_topic(char *topic_name)
 	struct topic new_topic;
 	new_topic.id = ll_get_size(topics) + 1;
 	strcpy(new_topic.topic_name, topic_name);
-	ll_add_nth_node(topics, ll_get_size(topics), &new_topic);
+	ll_add_nth_node(topics, 0, &new_topic);
 
 	return new_topic.id;
 }
 
-int get_topic_id(char *topic_name)
+uint8_t get_topic_id(char *topic_name)
 {
 	ll_node_t *head = topics->head;
 	
@@ -168,9 +150,9 @@ int get_topic_sf(linked_list_t *client_topics, uint8_t topic_id)
 void sub_client(struct client *curr_client, uint8_t sf, char *topic_name)
 {
 	struct command_hdr res;
-	int rc = get_topic_id(topic_name);
+	uint8_t rc = get_topic_id(topic_name);
 
-	if (rc == -1) {
+	if (rc == (uint8_t) -1) {
 		res.opcode = ERR;
 		res.option_sf = 0;
 		res.buf_len = 0;
@@ -179,16 +161,16 @@ void sub_client(struct client *curr_client, uint8_t sf, char *topic_name)
 		return;
 	}
 
-	struct subbed_topic client_topic;
-	client_topic.info.id = rc;
-	strcpy(client_topic.info.topic_name, topic_name);
-	client_topic.sf = sf;
-	ll_add_nth_node(curr_client->client_topics, 0, &client_topic);
+	struct subbed_topic *client_topic = calloc(1, sizeof(struct subbed_topic));
+	client_topic->info.id = rc;
+	strcpy(client_topic->info.topic_name, topic_name);
+	client_topic->sf = sf;
+	ll_add_nth_node(curr_client->client_topics, 0, client_topic);
+	free(client_topic);
 
 	res.opcode = OK;
 	res.option_sf = rc;
 	res.buf_len = 0;
-
 	send(curr_client->fd, &res, sizeof(struct command_hdr), 0);
 }
 
@@ -212,6 +194,7 @@ void unsub_client(struct client *curr_client, uint8_t topic_id)
 	send(curr_client->fd, &res, sizeof(struct command_hdr), 0);
 
 	ll_remove_nth_node(curr_client->client_topics, topic_idx);
+	printf("%d\n", ll_get_size(curr_client->client_topics));
 }
 
 int send_msg(struct message_t new_msg)
@@ -219,7 +202,7 @@ int send_msg(struct message_t new_msg)
 	ll_node_t *head = registered_users->head;
 
 	while (head) {
-		struct client *curr_client = (struct client*)head->data;
+		struct client *curr_client = *((struct client**)head->data);
 		
 		if (get_topic_idx(curr_client->client_topics, new_msg.header.topic_id) != -1 &&
 			curr_client->serv_conned) {
@@ -240,7 +223,7 @@ int main(int argc, char *argv[])
 	setvbuf(stdout, NULL, _IONBF, BUFSIZ);
 	int rc;
 	int tcp_sockfd, udp_sockfd, epoll_fd;
-	registered_users = ll_create(sizeof(client));
+	registered_users = ll_create(sizeof(struct client*));
 	topics = ll_create(sizeof(struct topic));
     struct sockaddr_in servaddr;
 	struct epoll_event ev;
@@ -447,36 +430,36 @@ int main(int argc, char *argv[])
 					check_client.opcode = OK;
 					check_client.option_sf = 1;
 					check_client.buf_len = 0;
+					struct client *old_client = get_client(buf);
+					old_client->fd = new_client_fd;
+
 					send(new_client_fd, &check_client, sizeof(struct command_hdr), 0);
-					send_subbed_topics(buf, new_client_fd);
+					send_subbed_topics(old_client);
+
+					ev.events = EPOLLIN;
+					ev.data.ptr = old_client;
+					if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, new_client_fd, &ev) < 0) {
+						printf("Failed to insert socket into epoll.\n");
+					}
+				} else {
+					check_client.opcode = OK;
+					check_client.option_sf = 0;
+					check_client.buf_len = 0;
+					send(new_client_fd, &check_client, sizeof(struct command_hdr), 0);
 
 					struct client *new_client = calloc(1, sizeof(struct client));
 					new_client->serv_conned = 1;
 					strcpy(new_client->id, buf);
 					new_client->fd = new_client_fd;
-				
-					
+					new_client->client_topics = ll_create(sizeof(struct subbed_topic));
+					new_client->msg_queue = ll_create(sizeof(struct message_t));
 
-					continue;
-				}
-
-				check_client.opcode = OK;
-				check_client.option_sf = 0;
-				check_client.buf_len = 0;
-				send(new_client_fd, &check_client, sizeof(struct command_hdr), 0);
-
-				struct client *new_client = calloc(1, sizeof(struct client));
-				new_client->serv_conned = 1;
-				strcpy(new_client->id, buf);
-				new_client->fd = new_client_fd;
-				new_client->client_topics = ll_create(sizeof(struct subbed_topic));
-				new_client->msg_queue = ll_create(sizeof(struct message_t));
-
-				ll_add_nth_node(registered_users, 0, new_client);
-				ev.events = EPOLLIN;
-				ev.data.ptr = new_client;
-				if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, new_client->fd, &ev) < 0) {
-					printf("Failed to insert socket into epoll.\n");
+					ll_add_nth_node(registered_users, 0, &new_client);
+					ev.events = EPOLLIN;
+					ev.data.ptr = new_client;
+					if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, new_client->fd, &ev) < 0) {
+						printf("Failed to insert socket into epoll.\n");
+					}
 				}
 
 				char ip_addr[30];
@@ -485,7 +468,7 @@ int main(int argc, char *argv[])
 					exit(2);
 				}
 
-				printf("New client %s connected from %s:%d.\n", new_client->id, ip_addr, new_client_addr.sin_port);
+				printf("New client %s connected from %s:%d.\n", buf, ip_addr, new_client_addr.sin_port);
 				free(buf);
 			} else if (events_list[i].data.fd == udp_sockfd) {
 				struct sockaddr_in udp_client;
@@ -516,6 +499,11 @@ int main(int argc, char *argv[])
 				int topic_id = add_new_topic(topic_name);
 				memcpy(&data_type, (new_content + 50), 1);
 
+				msg.header.ip_addr = udp_client.sin_addr.s_addr;
+				msg.header.port = udp_client.sin_port;
+				msg.header.data_type = data_type;
+				msg.header.topic_id = topic_id;
+
 				switch (data_type) {
 				case INT: {
 					uint8_t sign;
@@ -528,10 +516,6 @@ int main(int argc, char *argv[])
 						number = -number;
 					}
 
-					msg.header.ip_addr = udp_client.sin_addr.s_addr;
-					msg.header.port = udp_client.sin_port;
-					msg.header.data_type = data_type;
-					msg.header.topic_id = topic_id;
 					msg.header.buf_len = sizeof(number);
 					memcpy(msg.buf, &number, sizeof(uint32_t));
 				}
@@ -540,6 +524,8 @@ int main(int argc, char *argv[])
 					uint16_t number;
 					memcpy(&number, (new_content + 51), sizeof(uint16_t));
 					number = ntohs(number);
+
+
 				}
 					break;
 				case FLOAT: {
@@ -581,7 +567,7 @@ int main(int argc, char *argv[])
 
 				if (!rc) {
 					printf("Client %s disconnected.\n", curr_client->id);
-					disconn_client(curr_client->id);
+					curr_client->serv_conned = 0;
 					epoll_ctl(epoll_fd, EPOLL_CTL_DEL, events_list[i].data.fd, NULL);
 					close(curr_client->fd);
 					continue;

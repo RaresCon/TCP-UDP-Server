@@ -25,12 +25,12 @@ typedef enum data_type {
 struct topic {
     char topic_name[51];
     uint8_t id;
-} topic;
+} __attribute__((__packed__)) topic;
 
 struct subbed_topic {
     struct topic info;
     uint8_t sf;
-} subbed_topic;
+} __attribute__((__packed__)) subbed_topic;
 
 struct message_hdr {
     uint32_t ip_addr;
