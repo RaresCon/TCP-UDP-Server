@@ -19,6 +19,16 @@
 int16_t current_port = -1;
 linked_list_t *subbed_topics;
 
+void add_subbed_topic(uint8_t id, uint8_t sf, char *topic_name)
+{
+    struct subbed_topic new_topic;
+    new_topic.info.id = id;
+    strcpy(new_topic.info.topic_name, topic_name);
+    new_topic.sf = sf;
+
+    ll_add_nth_node(subbed_topics, 0, &new_topic);
+}
+
 int get_topic_id(char *topic_name) {
     ll_node_t *head = subbed_topics->head;
 
@@ -88,11 +98,14 @@ int verify_id(char *id, int tcp_sockfd)
             struct subbed_topic curr_topic;
             int len;
 
-            recv(tcp_sockfd, &curr_topic.info.id, sizeof(uint8_t), 0);
-            recv(tcp_sockfd, &curr_topic.sf, sizeof(uint8_t), 0);
             recv(tcp_sockfd, &len, sizeof(int), 0);
 
-            recv(tcp_sockfd, curr_topic.info.topic_name, len, 0);
+            char buf[len + sizeof(curr_topic.sf) + sizeof(curr_topic.info.id)];
+            recv(tcp_sockfd, buf, sizeof(curr_topic.sf) + sizeof(curr_topic.info.id) + len, 0);
+
+            memcpy(&curr_topic.sf, buf, sizeof(curr_topic.sf));
+            memcpy(&curr_topic.info.id, buf + sizeof(curr_topic.sf), sizeof(curr_topic.info.id));
+            memcpy(curr_topic.info.topic_name, buf + sizeof(curr_topic.sf) + sizeof(curr_topic.info.id), len);
 
             ll_add_nth_node(subbed_topics, 0, &curr_topic);
         }
@@ -201,9 +214,9 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    char check_id[10];
-    sprintf(check_id, "%hd", atoi(argv[3]));
-    if (strlen(argv[3]) != strlen(check_id)) {
+    char check_port[10];
+    sprintf(check_port, "%hd", atoi(argv[3]));
+    if (strlen(argv[3]) != strlen(check_port)) {
         set_errno(ECONNABORTED);
         perror("Invalid server port ");
         return 1;
@@ -314,7 +327,7 @@ int main(int argc, char *argv[])
 
 	events_list = calloc(2, sizeof(ev));
     while (1) {
-		int num_of_events = epoll_wait(epoll_fd, events_list, 2, 2000);
+		int num_of_events = epoll_wait(epoll_fd, events_list, 2, 100);
 		if(num_of_events == -1) {
             set_errno(ECONNABORTED);
 			perror("epoll_wait() failed ");
@@ -323,9 +336,12 @@ int main(int argc, char *argv[])
 
 		for (int i = 0; i < num_of_events; i++) {
 			if(events_list[i].data.fd == tcp_sockfd) {
-                int rc, msg_num;
+                int rc, msg_num, tot_len;
                 struct message_hdr server_msg;
-				rc = recv(tcp_sockfd, &msg_num, sizeof(msg_num), 0);
+                char buf[BUFSIZ];
+
+                char header[sizeof(msg_num) + sizeof(tot_len)];
+				rc = recv(tcp_sockfd, header, sizeof(msg_num) + sizeof(tot_len), 0);
 
 				if (!rc) {
                     ll_free(&subbed_topics);
@@ -336,19 +352,44 @@ int main(int argc, char *argv[])
 					return 0;
 				}
 
+                memcpy(&msg_num, header, sizeof(msg_num));
+                memcpy(&tot_len, header + sizeof(msg_num), sizeof(tot_len));
+
+                recv(tcp_sockfd, buf, tot_len, 0);
+
+                int offset = 0;
                 for (int i = 0; i < msg_num; i++) {
-                    char buf[1500];
-                    rc = recv(tcp_sockfd, &server_msg, sizeof(server_msg), 0);
-                    rc = recv(tcp_sockfd, buf, server_msg.buf_len, 0);
+                    memcpy(&server_msg, buf + offset, sizeof(server_msg));
+                    char content[server_msg.buf_len];
+                    memcpy(content, buf + offset + sizeof(server_msg), server_msg.buf_len);
 
                     char ip_addr[30];
                     inet_ntop(AF_INET, &server_msg.ip_addr, ip_addr, sizeof(struct sockaddr_in));
+
+                    char *print_string;
                     switch (server_msg.data_type) {
                     case INT: {
-                        printf(INT_MSG, ip_addr, server_msg.port, get_topic_name(server_msg.topic_id), *((int *)buf));
+                        printf(INT_MSG, ip_addr, server_msg.port, get_topic_name(server_msg.topic_id), *((int *)content));
                     }
                     break;
+                    case SHORT_REAL: {
+                        printf(SR_MSG, ip_addr, server_msg.port, get_topic_name(server_msg.topic_id), *((float *)content));
                     }
+                    break;
+                    case FLOAT: {
+                        printf(FLT_MSG, ip_addr, server_msg.port, get_topic_name(server_msg.topic_id), *((double *)content));
+                    }
+                    break;
+                    case STRING: {
+                        printf(STR_MSG, ip_addr, server_msg.port, get_topic_name(server_msg.topic_id), content);
+                    }
+                    break;
+                    default: {
+                        fprintf(stderr, "Unrecognized data type\n.");
+                    }
+                    }
+
+                    offset += sizeof(server_msg) + server_msg.buf_len;
                 }
 			} else if (events_list[i].data.fd == STDIN_FILENO) {
                 comm_type req;
@@ -368,7 +409,7 @@ int main(int argc, char *argv[])
                         free(events_list);
                         free(tokens);
 
-                        exit(0);
+                        return 0;
                     }
                     break;
                     case UNSUBSCRIBE: {
@@ -380,7 +421,7 @@ int main(int argc, char *argv[])
                         }
 
                         unsubscribe_topic(topic_id, tcp_sockfd);
-                        ll_node_t *removed = ll_remove_nth_node(subbed_topics, get_topic_idx(topic_id));
+                        ll_remove_nth_node(subbed_topics, get_topic_idx(topic_id));
 
                         printf("Unsubscribed from topic.\n");
                     }
@@ -388,7 +429,8 @@ int main(int argc, char *argv[])
                     case SUBSCRIBE: {
                         char check_SF[10];
                         sprintf(check_SF, "%hhd", atoi(tokens[2]));
-                        if (strlen(tokens[2]) != strlen(check_SF)) {
+                        if (strlen(tokens[2]) != strlen(check_SF) ||
+                            atoi(tokens[2]) != 0 || atoi(tokens[2]) != 1) {
                             fprintf(stderr, "Invalid command. Please try again.\n");
                             continue;
                         }
@@ -403,13 +445,7 @@ int main(int argc, char *argv[])
                             continue;
                         }
 
-                        struct subbed_topic new_topic;
-                        new_topic.info.id = topic_id;
-                        strcpy(new_topic.info.topic_name, tokens[1]);
-                        new_topic.sf = atoi(tokens[2]);
-
-                        ll_add_nth_node(subbed_topics, 0, &new_topic);
-
+                        add_subbed_topic(topic_id, atoi(tokens[2]), tokens[1]);
                         printf("Subscribed to topic.\n");
                     }
                     break;

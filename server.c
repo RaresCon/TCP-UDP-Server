@@ -22,24 +22,6 @@ int16_t current_port = -1;
 linked_list_t *registered_users;
 linked_list_t *topics;
 
-int verify_new_id(char *id)
-{
-	ll_node_t *head = registered_users->head;
-
-	while (head) {
-		struct client *curr_client = *((struct client**)head->data);
-		if (!strcmp(curr_client->id, id) && curr_client->serv_conned) {
-			return -1;
-		} else if (!strcmp(curr_client->id, id)) {
-			curr_client->serv_conned = 1;
-			return 1;
-		}
-		head = head->next;
-	}
-
-	return 0;
-}
-
 struct client *get_client(char *id)
 {
 	ll_node_t *head = registered_users->head;
@@ -69,11 +51,14 @@ void send_subbed_topics(struct client *curr_client)
 			uint8_t sf = curr_topic->sf;
 			int len = strlen(curr_topic->info.topic_name) + 1;
 
-			send(curr_client->fd, &id, sizeof(uint8_t), 0);
-			send(curr_client->fd, &sf, sizeof(uint8_t), 0);
 			send(curr_client->fd, &len, sizeof(int), 0);
 
-			send(curr_client->fd, curr_topic->info.topic_name, len, 0);
+			char buf[len + sizeof(sf) + sizeof(id)];
+			memcpy(buf, &sf, sizeof(sf));
+			memcpy(buf + sizeof(sf), &id, sizeof(id));
+			memcpy(buf + sizeof(sf) + sizeof(id), curr_topic->info.topic_name, len);
+
+			send(curr_client->fd, buf, sizeof(sf) + sizeof(id) + len, 0);
 
 			head = head->next;
 		}
@@ -132,7 +117,7 @@ int get_topic_idx(linked_list_t *client_topics, uint8_t topic_id)
 	return -1;
 }
 
-int get_topic_sf(linked_list_t *client_topics, uint8_t topic_id)
+uint8_t get_topic_sf(linked_list_t *client_topics, uint8_t topic_id)
 {
 	ll_node_t *head = client_topics->head;
 
@@ -161,12 +146,11 @@ void sub_client(struct client *curr_client, uint8_t sf, char *topic_name)
 		return;
 	}
 
-	struct subbed_topic *client_topic = calloc(1, sizeof(struct subbed_topic));
-	client_topic->info.id = rc;
-	strcpy(client_topic->info.topic_name, topic_name);
-	client_topic->sf = sf;
-	ll_add_nth_node(curr_client->client_topics, 0, client_topic);
-	free(client_topic);
+	struct subbed_topic client_topic;
+	client_topic.info.id = rc;
+	strcpy(client_topic.info.topic_name, topic_name);
+	client_topic.sf = sf;
+	ll_add_nth_node(curr_client->client_topics, 0, &client_topic);
 
 	res.opcode = OK;
 	res.option_sf = rc;
@@ -194,7 +178,6 @@ void unsub_client(struct client *curr_client, uint8_t topic_id)
 	send(curr_client->fd, &res, sizeof(struct command_hdr), 0);
 
 	ll_remove_nth_node(curr_client->client_topics, topic_idx);
-	printf("%d\n", ll_get_size(curr_client->client_topics));
 }
 
 int send_msg(struct message_t new_msg)
@@ -206,13 +189,22 @@ int send_msg(struct message_t new_msg)
 		
 		if (get_topic_idx(curr_client->client_topics, new_msg.header.topic_id) != -1 &&
 			curr_client->serv_conned) {
-			int no = 1;
-			send(curr_client->fd, &no, sizeof(int), 0);
-			send(curr_client->fd, &new_msg.header, sizeof(message_hdr), 0);
-			send(curr_client->fd, new_msg.buf, new_msg.header.buf_len, 0);
+			int no = 1, tot_len = sizeof(struct message_hdr) + new_msg.header.buf_len;
+
+			char header[sizeof(no) + sizeof(tot_len)];
+			memcpy(header, &no, sizeof(no));
+			memcpy(header + sizeof(no), &tot_len, sizeof(tot_len));
+			send(curr_client->fd, header, sizeof(no) + sizeof(tot_len), 0);
+
+			char buf[sizeof(struct message_hdr) + new_msg.header.buf_len];
+			memcpy(buf, &new_msg.header, sizeof(struct message_hdr));
+			memcpy(buf + sizeof(struct message_hdr), new_msg.buf, new_msg.header.buf_len);
+
+			send(curr_client->fd, buf, tot_len, 0);
 		} else if (!curr_client->serv_conned &&
-				   get_topic_sf(curr_client->client_topics, new_msg.header.topic_id)) {
+				   get_topic_sf(curr_client->client_topics, new_msg.header.topic_id) == (uint8_t) 1) {
 			ll_add_nth_node(curr_client->msg_queue, 0, &new_msg);
+			printf("%d\n", ll_get_size(curr_client->msg_queue));
 		}
 		head = head->next;
 	}
@@ -237,7 +229,7 @@ int main(int argc, char *argv[])
     current_port = atoi(argv[1]);
 	if (!current_port) {
 		perror("Invalid server port. Aborting...\n");
-		exit(2);
+		exit(EXIT_FAILURE);
 	}
 
     epoll_fd = epoll_create(MAXCONNS);
@@ -256,7 +248,7 @@ int main(int argc, char *argv[])
         }
         if (!retries) {
             perror("socket(SOCK_STREAM) failed. Aborting...\n");
-            exit(2);
+            exit(EXIT_FAILURE);
         }
     }
 
@@ -264,10 +256,10 @@ int main(int argc, char *argv[])
 	int current_tcp_flags = fcntl(tcp_sockfd, F_GETFL, 0);
 	if (current_tcp_flags == -1) {
 		perror("fcntl(F_GETFL) failed.");
-		exit(2);
+		exit(EXIT_FAILURE);
 	} else if (fcntl(tcp_sockfd, F_SETFL, current_tcp_flags | O_NONBLOCK) == -1) {
 		perror("fcntl(F_SETFL) failed.");
-		exit(2);
+		exit(EXIT_FAILURE);
 	}
 
     int enable = 1;
@@ -285,7 +277,7 @@ int main(int argc, char *argv[])
         }
         if (!retries) {
 			perror("bind() failed. Aborting...\n");
-            exit(2);
+            exit(EXIT_FAILURE);
         }
     }
 
@@ -297,7 +289,7 @@ int main(int argc, char *argv[])
         }
         if (!retries) {
 			perror("listen() failed. Aborting...\n");
-            exit(2);
+            exit(EXIT_FAILURE);
         }
 	}
 
@@ -310,7 +302,7 @@ int main(int argc, char *argv[])
         }
         if (!retries) {
 			perror("epoll_ctl(EPOLL_CTL_ADD) failed. Aborting...\n");
-            exit(2);
+            exit(EXIT_FAILURE);
         }
 	}
 
@@ -323,7 +315,7 @@ int main(int argc, char *argv[])
         }
         if (!retries) {
             perror("socket(SOCK_DGRAM) failed. Aborting...\n");
-            exit(2);
+            exit(EXIT_FAILURE);
         }
     }
 
@@ -338,7 +330,7 @@ int main(int argc, char *argv[])
         }
         if (!retries) {
 			perror("bind() failed. Aborting...\n");
-            exit(2);
+            exit(EXIT_FAILURE);
         }
     }
 
@@ -351,7 +343,7 @@ int main(int argc, char *argv[])
         }
         if (!retries) {
 			perror("epoll_ctl(EPOLL_CTL_ADD) failed. Aborting...\n");
-            exit(2);
+            exit(EXIT_FAILURE);
         }
 	}
 
@@ -364,13 +356,13 @@ int main(int argc, char *argv[])
         }
         if (!retries) {
 			perror("epoll_ctl(EPOLL_CTL_ADD) failed. Aborting...\n");
-            exit(2);
+            exit(EXIT_FAILURE);
         }
 	}
 
 	events_list = calloc(MAXCONNS, sizeof(ev));
 	while (1) {
-		int num_of_events = epoll_wait(epoll_fd, events_list, MAXCONNS, 2000);
+		int num_of_events = epoll_wait(epoll_fd, events_list, MAXCONNS, 100);
 		if(num_of_events == -1) {
 			perror("epoll_wait() failed. Aborting...");
 			break;
@@ -417,7 +409,8 @@ int main(int argc, char *argv[])
 				char *buf = malloc(check_client.buf_len);
 				recv(new_client_fd, buf, check_client.buf_len, 0);
 
-				if ((rc = verify_new_id(buf)) == -1) {
+				struct client *old_client = get_client(buf);
+				if (old_client && old_client->serv_conned) {
 					printf("Client %s already connected.\n", buf);
 					check_client.opcode = ERR;
 					check_client.option_sf = 0;
@@ -426,14 +419,14 @@ int main(int argc, char *argv[])
 					send(new_client_fd, &check_client, sizeof(struct command_hdr), 0);
 					close(new_client_fd);
 					continue;
-				} else if (rc == 1) {
+				} else if (old_client) {
 					check_client.opcode = OK;
 					check_client.option_sf = 1;
 					check_client.buf_len = 0;
-					struct client *old_client = get_client(buf);
-					old_client->fd = new_client_fd;
-
 					send(new_client_fd, &check_client, sizeof(struct command_hdr), 0);
+
+					old_client->fd = new_client_fd;
+					old_client->serv_conned = 1;
 					send_subbed_topics(old_client);
 
 					ev.events = EPOLLIN;
@@ -465,7 +458,7 @@ int main(int argc, char *argv[])
 				char ip_addr[30];
 				if (!inet_ntop(AF_INET, &new_client_addr.sin_addr, ip_addr, addr_size)) {
 					perror("inet_ntop() failed. Aborting...\n");
-					exit(2);
+					exit(EXIT_FAILURE);
 				}
 
 				printf("New client %s connected from %s:%d.\n", buf, ip_addr, new_client_addr.sin_port);
@@ -509,35 +502,59 @@ int main(int argc, char *argv[])
 					uint8_t sign;
 					uint32_t number;
 
-					memcpy(&sign, (new_content + 51), 1);
-					memcpy(&number, (new_content + 52), sizeof(uint32_t));
+					memcpy(&sign, (new_content + 51), sizeof(sign));
+					memcpy(&number, (new_content + 52), sizeof(number));
 					number = ntohl(number);
 					if (sign) {
 						number = -number;
 					}
 
 					msg.header.buf_len = sizeof(number);
-					memcpy(msg.buf, &number, sizeof(uint32_t));
+					memcpy(msg.buf, &number, sizeof(number));
 				}
-					break;
+				break;
 				case SHORT_REAL: {
 					uint16_t number;
 					memcpy(&number, (new_content + 51), sizeof(uint16_t));
 					number = ntohs(number);
 
+					float short_real = (float) number / 100;
 
+					msg.header.buf_len = sizeof(short_real);
+					memcpy(msg.buf, &short_real, sizeof(short_real));
 				}
-					break;
+				break;
 				case FLOAT: {
+					uint8_t sign, pow;
+					uint32_t number;
 
+					memcpy(&sign, (new_content + 51), sizeof(sign));
+					memcpy(&number, (new_content + 52), sizeof(number));
+					number = ntohl(number);
+					memcpy(&pow, (new_content + 52 + sizeof(number)), sizeof(pow));
+
+					int div_pow = 1;
+					for (int i = 0; i < pow; i++) {
+						div_pow *= 10;
+					}
+					double real = (double) number / div_pow;
+
+					if (sign) {
+						real = -real;
+					}
+
+					msg.header.buf_len = sizeof(real);
+					memcpy(msg.buf, &real, sizeof(real));
 				}
-					break;
-				case STRING:
-					//printf("%s\n", new_content + 51);
-					break;
+				break;
+				case STRING: {
+					msg.header.buf_len = strlen(new_content + 51) + 1;
+					strcpy(msg.buf, (new_content + 51));
+				}
+				break;
 				default:
 					fprintf(stderr, "Unrecognized data type from UDP client - dropping.\n");
-					break;
+				break;
 				}
 
 				send_msg(msg);
@@ -580,14 +597,14 @@ int main(int argc, char *argv[])
 					sub_client(curr_client, command_from_client.option_sf, buf);
 					free(buf);
 				}
-					break;
+				break;
 				case UNSUBSCRIBE: {
 					unsub_client(curr_client, command_from_client.option_sf);
 				}
-					break;
+				break;
 				default:
 					fprintf(stderr, "Unrecognized client request.\n");
-					break;
+				break;
 				}
 			}
 		}

@@ -6,6 +6,9 @@
 #include <netdb.h>
 
 #define INT_MSG "%s:%d - %s - INT - %d\n"
+#define SR_MSG "%s:%d - %s - SHORT_REAL - %.2f\n"
+#define FLT_MSG "%s:%d - %s - FLOAT - %lf\n"
+#define STR_MSG "%s:%d - %s - STRING - %s\n"
 
 typedef enum comm_type {
     ERR = -1,
@@ -38,7 +41,7 @@ struct message_hdr {
     uint16_t port;
     uint8_t topic_id;
     uint8_t data_type;
-    uint8_t buf_len;
+    uint16_t buf_len;
 } __attribute__((__packed__)) message_hdr; 
 
 struct message_t {

@@ -23,13 +23,13 @@ typedef enum data_type {
 } data_type;
 
 struct topic {
-    char topic_name[51];
     uint8_t id;
+    char topic_name[51];
 } __attribute__((__packed__)) topic;
 
 struct subbed_topic {
-    struct topic info;
     uint8_t sf;
+    struct topic info;
 } __attribute__((__packed__)) subbed_topic;
 
 struct message_hdr {
@@ -37,12 +37,12 @@ struct message_hdr {
     uint16_t port;
     uint8_t topic_id;
     uint8_t data_type;
-    uint8_t buf_len;
+    uint16_t buf_len;
 } __attribute__((__packed__)) message_hdr; 
 
 struct message_t {
     struct message_hdr header;
-    char buf[1500];
+    char buf[1501];
 } message_t;
 
 struct client {
