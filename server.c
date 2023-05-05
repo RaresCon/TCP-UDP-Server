@@ -22,49 +22,6 @@ int16_t current_port = -1;
 linked_list_t *registered_users;
 linked_list_t *topics;
 
-struct client *get_client(char *id)
-{
-	ll_node_t *head = registered_users->head;
-
-	while (head) {
-		struct client *curr_client = *((struct client**)head->data);
-		if (!strcmp(curr_client->id, id)) {
-			return curr_client;
-		}
-		head = head->next;
-	}
-
-	return NULL;
-}
-
-void send_subbed_topics(struct client *curr_client)
-{
-	if (curr_client) {
-		int topics_no = ll_get_size(curr_client->client_topics);
-		ll_node_t *head = curr_client->client_topics->head;
-		send(curr_client->fd, &topics_no, sizeof(int), 0);
-
-		for (int i = 0; i < topics_no; i++) {
-			struct subbed_topic *curr_topic = (struct subbed_topic *)head->data;
-
-			uint8_t id = curr_topic->info.id;
-			uint8_t sf = curr_topic->sf;
-			int len = strlen(curr_topic->info.topic_name) + 1;
-
-			send(curr_client->fd, &len, sizeof(int), 0);
-
-			char buf[len + sizeof(sf) + sizeof(id)];
-			memcpy(buf, &sf, sizeof(sf));
-			memcpy(buf + sizeof(sf), &id, sizeof(id));
-			memcpy(buf + sizeof(sf) + sizeof(id), curr_topic->info.topic_name, len);
-
-			send(curr_client->fd, buf, sizeof(sf) + sizeof(id) + len, 0);
-
-			head = head->next;
-		}
-	}
-}
-
 int add_new_topic(char *topic_name)
 {
 	ll_node_t *head = topics->head;
@@ -132,6 +89,151 @@ uint8_t get_topic_sf(linked_list_t *client_topics, uint8_t topic_id)
 	return -1;
 }
 
+struct client *get_client(char *id)
+{
+	ll_node_t *head = registered_users->head;
+
+	while (head) {
+		struct client *curr_client = *((struct client**)head->data);
+		if (!strcmp(curr_client->id, id)) {
+			return curr_client;
+		}
+		head = head->next;
+	}
+
+	return NULL;
+}
+
+int get_msgs_size(linked_list_t *msg_queue)
+{
+	int size = ll_get_size(msg_queue) * sizeof(struct message_hdr);
+	ll_node_t *head = msg_queue->head;
+
+	while (head) {
+		struct message_t *curr_msg = (struct message_t *)head->data;
+		size += curr_msg->header.buf_len;
+
+		head = head->next;
+	}
+
+	return size;
+}
+
+int get_topics_size(linked_list_t *topics)
+{
+	int size = ll_get_size(topics) * (2 * sizeof(uint8_t));
+	ll_node_t *head = topics->head;
+
+	while (head) {
+		struct subbed_topic *curr_topic = (struct subbed_topic *)head->data;
+		size += strlen(curr_topic->info.topic_name) + 1;
+
+		head = head->next;
+	}
+
+	return size;
+}
+
+void send_subbed_topics(struct client *curr_client)
+{
+	int topics_no, tot_len;
+	topics_no = ll_get_size(curr_client->client_topics);
+	tot_len = get_topics_size(curr_client->client_topics) + topics_no * sizeof(int);
+
+	char header[sizeof(topics_no) + sizeof(tot_len)];
+	memcpy(header, &topics_no, sizeof(topics_no));
+	memcpy(header + sizeof(topics_no), &tot_len, sizeof(tot_len));
+	send(curr_client->fd, header, sizeof(topics_no) + sizeof(tot_len), 0);
+
+	if (topics_no == 0) {
+		return;
+	}
+
+	int offset = 0;
+	char buf[BUFSIZ];
+	ll_node_t *head = curr_client->client_topics->head;
+
+	for (int i = 0; i < topics_no; i++) {
+		struct subbed_topic *curr_topic = (struct subbed_topic *)head->data;
+		int len = strlen(curr_topic->info.topic_name) + 1;
+
+		memcpy(buf + offset, &len, sizeof(len));
+		memcpy(buf + offset + sizeof(len), &curr_topic->sf, sizeof(curr_topic->sf));
+		memcpy(buf + offset + sizeof(len) + sizeof(curr_topic->sf), &curr_topic->info.id, sizeof(curr_topic->info.id));
+		memcpy(buf + offset + sizeof(len) + sizeof(curr_topic->sf) + sizeof(curr_topic->info.id),  curr_topic->info.topic_name, len);
+
+		offset += sizeof(len) + sizeof(curr_topic->sf) + sizeof(curr_topic->info.id) + len;
+		head = head->next;
+	}
+
+	send(curr_client->fd, buf, tot_len, 0);
+}
+
+void send_msg(struct message_t new_msg)
+{
+	ll_node_t *head = registered_users->head;
+
+	while (head) {
+		struct client *curr_client = *((struct client**)head->data);
+		
+		if (get_topic_idx(curr_client->client_topics, new_msg.header.topic_id) != -1 &&
+			curr_client->serv_conned) {
+			int no, tot_len;
+			no = 1;
+			tot_len = sizeof(struct message_hdr) + new_msg.header.buf_len;
+
+			char header[sizeof(no) + sizeof(tot_len)];
+			memcpy(header, &no, sizeof(no));
+			memcpy(header + sizeof(no), &tot_len, sizeof(tot_len));
+
+			char buf[sizeof(struct message_hdr) + new_msg.header.buf_len];
+			memcpy(buf, &new_msg.header, sizeof(struct message_hdr));
+			memcpy(buf + sizeof(struct message_hdr), new_msg.buf, new_msg.header.buf_len);
+
+			send(curr_client->fd, header, sizeof(no) + sizeof(tot_len), 0);
+			send(curr_client->fd, buf, tot_len, 0);
+		} else if (!curr_client->serv_conned &&
+				   get_topic_sf(curr_client->client_topics, new_msg.header.topic_id) == (uint8_t) 1) {
+			ll_add_nth_node(curr_client->msg_queue, ll_get_size(curr_client->msg_queue), &new_msg);
+		}
+		head = head->next;
+	}
+}
+
+void send_sf_msgs(struct client *curr_client)
+{
+	linked_list_t *msg_queue = curr_client->msg_queue;
+	int msg_no, tot_len;
+	msg_no = ll_get_size(msg_queue);
+	tot_len = get_msgs_size(msg_queue);
+
+	char header[sizeof(msg_no) + sizeof(tot_len)];
+	memcpy(header, &msg_no, sizeof(msg_no));
+	memcpy(header + sizeof(msg_no), &tot_len, sizeof(tot_len));
+	send(curr_client->fd, header, sizeof(msg_no) + sizeof(tot_len), 0);
+
+	if (msg_no == 0) {
+		return;
+	}
+
+	int offset = 0;
+	char buf[BUFSIZ];
+	ll_node_t *head = msg_queue->head;
+
+	for (int i = 0; i < msg_no; i++) {
+		struct message_t *curr_msg = (struct message_t*)head->data;
+
+		memcpy(buf + offset, &curr_msg->header, sizeof(struct message_hdr));
+		memcpy(buf + offset + sizeof(struct message_hdr), curr_msg->buf, curr_msg->header.buf_len);
+		offset += sizeof(struct message_hdr) + curr_msg->header.buf_len;
+
+		head = head->next;
+	}
+
+	send(curr_client->fd, buf, tot_len, 0);
+	ll_free_elems(&curr_client->msg_queue);
+}
+
 void sub_client(struct client *curr_client, uint8_t sf, char *topic_name)
 {
 	struct command_hdr res;
@@ -180,40 +282,9 @@ void unsub_client(struct client *curr_client, uint8_t topic_id)
 	ll_remove_nth_node(curr_client->client_topics, topic_idx);
 }
 
-int send_msg(struct message_t new_msg)
-{
-	ll_node_t *head = registered_users->head;
-
-	while (head) {
-		struct client *curr_client = *((struct client**)head->data);
-		
-		if (get_topic_idx(curr_client->client_topics, new_msg.header.topic_id) != -1 &&
-			curr_client->serv_conned) {
-			int no = 1, tot_len = sizeof(struct message_hdr) + new_msg.header.buf_len;
-
-			char header[sizeof(no) + sizeof(tot_len)];
-			memcpy(header, &no, sizeof(no));
-			memcpy(header + sizeof(no), &tot_len, sizeof(tot_len));
-			send(curr_client->fd, header, sizeof(no) + sizeof(tot_len), 0);
-
-			char buf[sizeof(struct message_hdr) + new_msg.header.buf_len];
-			memcpy(buf, &new_msg.header, sizeof(struct message_hdr));
-			memcpy(buf + sizeof(struct message_hdr), new_msg.buf, new_msg.header.buf_len);
-
-			send(curr_client->fd, buf, tot_len, 0);
-		} else if (!curr_client->serv_conned &&
-				   get_topic_sf(curr_client->client_topics, new_msg.header.topic_id) == (uint8_t) 1) {
-			ll_add_nth_node(curr_client->msg_queue, 0, &new_msg);
-			printf("%d\n", ll_get_size(curr_client->msg_queue));
-		}
-		head = head->next;
-	}
-}
-
 int main(int argc, char *argv[])
 {
 	setvbuf(stdout, NULL, _IONBF, BUFSIZ);
-	int rc;
 	int tcp_sockfd, udp_sockfd, epoll_fd;
 	registered_users = ll_create(sizeof(struct client*));
 	topics = ll_create(sizeof(struct topic));
@@ -428,11 +499,13 @@ int main(int argc, char *argv[])
 					old_client->fd = new_client_fd;
 					old_client->serv_conned = 1;
 					send_subbed_topics(old_client);
+					send_sf_msgs(old_client);
 
 					ev.events = EPOLLIN;
 					ev.data.ptr = old_client;
 					if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, new_client_fd, &ev) < 0) {
-						printf("Failed to insert socket into epoll.\n");
+						fprintf(stderr, "Failed to insert socket into epoll.\n");
+						close(old_client->fd);
 					}
 				} else {
 					check_client.opcode = OK;
@@ -451,13 +524,13 @@ int main(int argc, char *argv[])
 					ev.events = EPOLLIN;
 					ev.data.ptr = new_client;
 					if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, new_client->fd, &ev) < 0) {
-						printf("Failed to insert socket into epoll.\n");
+						fprintf(stderr, "Failed to insert socket into epoll.\n");
 					}
 				}
 
 				char ip_addr[30];
 				if (!inet_ntop(AF_INET, &new_client_addr.sin_addr, ip_addr, addr_size)) {
-					perror("inet_ntop() failed. Aborting...\n");
+					fprintf(stderr, "inet_ntop() failed. Aborting...\n");
 					exit(EXIT_FAILURE);
 				}
 
@@ -474,7 +547,8 @@ int main(int argc, char *argv[])
 								  (struct sockaddr *) &udp_client, &addr_size);
 
 				if (rc < 0) {
-					perror("recvfrom() failed.");
+					fprintf(stderr, "recv() error\n");
+					exit(EXIT_FAILURE);
 				}
 
 				char topic_name[51];

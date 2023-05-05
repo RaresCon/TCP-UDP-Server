@@ -91,22 +91,32 @@ int verify_id(char *id, int tcp_sockfd)
     if (check_client.opcode == (uint8_t) ERR) {
         return -1;
     } else if(check_client.option_sf == (uint8_t) 1) {
-        int topics_no;
-        recv(tcp_sockfd, &topics_no, sizeof(int), 0);
+        int topics_no, tot_len;
+        char header[sizeof(topics_no) + sizeof(tot_len)];
+        char buf[BUFSIZ];
 
+        recv(tcp_sockfd, header, sizeof(topics_no) + sizeof(tot_len), 0);
+        memcpy(&topics_no, header, sizeof(topics_no));
+        memcpy(&tot_len, header + sizeof(topics_no), sizeof(tot_len));
+
+        if (!tot_len) {
+            return 0;
+        }
+
+        recv(tcp_sockfd, buf, tot_len, 0);
+
+        int offset = 0;
         for (int i = 0; i < topics_no; i++) {
             struct subbed_topic curr_topic;
             int len;
 
-            recv(tcp_sockfd, &len, sizeof(int), 0);
+            // as putea incerca sa dau memcpy la toata structura daca pun in len tot din server
+            memcpy(&len, buf + offset, sizeof(len));
+            memcpy(&curr_topic.sf, buf + offset + sizeof(len), sizeof(curr_topic.sf));
+            memcpy(&curr_topic.info.id, buf + offset + sizeof(len) + sizeof(curr_topic.sf), sizeof(curr_topic.info.id));
+            memcpy(curr_topic.info.topic_name, buf + offset + sizeof(len) + sizeof(curr_topic.sf) + sizeof(curr_topic.info.id), len);
 
-            char buf[len + sizeof(curr_topic.sf) + sizeof(curr_topic.info.id)];
-            recv(tcp_sockfd, buf, sizeof(curr_topic.sf) + sizeof(curr_topic.info.id) + len, 0);
-
-            memcpy(&curr_topic.sf, buf, sizeof(curr_topic.sf));
-            memcpy(&curr_topic.info.id, buf + sizeof(curr_topic.sf), sizeof(curr_topic.info.id));
-            memcpy(curr_topic.info.topic_name, buf + sizeof(curr_topic.sf) + sizeof(curr_topic.info.id), len);
-
+            offset += sizeof(len) + sizeof(curr_topic.sf) + sizeof(curr_topic.info.id) + len;
             ll_add_nth_node(subbed_topics, 0, &curr_topic);
         }
     }
@@ -255,16 +265,6 @@ int main(int argc, char *argv[])
         }
     }
 
-	// /* Setting TCP Socket as non-blocking */
-	// int current_tcp_flags = fcntl(tcp_sockfd, F_GETFL, 0);
-	// if (current_tcp_flags == -1) {
-	// 	perror("fcntl(F_GETFL) failed.");
-	// 	return 1;;
-	// } else if (fcntl(tcp_sockfd, F_SETFL, current_tcp_flags | O_NONBLOCK) == -1) {
-	// 	perror("fcntl(F_SETFL) failed.");
-	// 	return 1;;
-	// }
-
     int enable = 1;
     if (setsockopt(tcp_sockfd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) < 0) {
         set_errno(ECONNABORTED);
@@ -355,6 +355,10 @@ int main(int argc, char *argv[])
                 memcpy(&msg_num, header, sizeof(msg_num));
                 memcpy(&tot_len, header + sizeof(msg_num), sizeof(tot_len));
 
+                if (msg_num == 0) {
+                    continue;
+                }
+
                 recv(tcp_sockfd, buf, tot_len, 0);
 
                 int offset = 0;
@@ -430,7 +434,7 @@ int main(int argc, char *argv[])
                         char check_SF[10];
                         sprintf(check_SF, "%hhd", atoi(tokens[2]));
                         if (strlen(tokens[2]) != strlen(check_SF) ||
-                            atoi(tokens[2]) != 0 || atoi(tokens[2]) != 1) {
+                            (atoi(tokens[2]) != 0 && atoi(tokens[2]) != 1)) {
                             fprintf(stderr, "Invalid command. Please try again.\n");
                             continue;
                         }
