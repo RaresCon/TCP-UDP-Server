@@ -16,7 +16,7 @@ linked_list_t *ll_create(unsigned int data_size)
     return ll;
 }
 
-void ll_add_nth_node(linked_list_t* list, unsigned int n, const void* new_data)
+void ll_add_nth_node(linked_list_t *list, unsigned int n, const void *new_data)
 {
     ll_node_t *prev, *curr;
     ll_node_t* new_node;
@@ -51,7 +51,7 @@ void ll_add_nth_node(linked_list_t* list, unsigned int n, const void* new_data)
     list->size++;
 }
 
-ll_node_t *ll_remove_nth_node(linked_list_t* list, unsigned int n)
+ll_node_t *ll_remove_nth_node(linked_list_t *list, unsigned int n)
 {
     ll_node_t *prev, *curr;
 
@@ -82,7 +82,7 @@ ll_node_t *ll_remove_nth_node(linked_list_t* list, unsigned int n)
     return curr;
 }
 
-unsigned int ll_get_size(linked_list_t* list)
+unsigned int ll_get_size(linked_list_t *list)
 {
      if (!list) {
         return -1;
@@ -91,7 +91,22 @@ unsigned int ll_get_size(linked_list_t* list)
     return list->size;
 }
 
-void ll_free(linked_list_t** pp_list)
+void ll_free_elems(linked_list_t **list)
+{
+    ll_node_t *head = (*list)->head;
+
+    while (head) {
+        ll_node_t *prev = head;
+        free(head->data);
+        head = head->next;
+        free(prev);
+    }
+
+    (*list)->head = NULL;
+    (*list)->size = 0;
+}
+
+void ll_free(linked_list_t **pp_list)
 {
     ll_node_t* currNode;
 
