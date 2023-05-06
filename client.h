@@ -10,47 +10,12 @@
 #define FLT_MSG "%s:%d - %s - FLOAT - %lf\n"
 #define STR_MSG "%s:%d - %s - STRING - %s\n"
 
-typedef enum comm_type {
-    ERR = -1,
-    OK,
-    EXIT,
-    CHECK_ID,
-    SUBSCRIBE,
-    UNSUBSCRIBE,
-} comm_type;
-
-typedef enum data_type {
-    INT,
-    SHORT_REAL,
-    FLOAT,
-    STRING,
-} data_type;
-
-struct topic {
-    char topic_name[51];
-    uint8_t id;
-} topic;
-
-struct subbed_topic {
-    struct topic info;
-    uint8_t sf;
-} subbed_topic;
-
-struct message_hdr {
-    uint32_t ip_addr;
-    uint16_t port;
-    uint8_t topic_id;
-    uint8_t data_type;
-    uint16_t buf_len;
-} __attribute__((__packed__)) message_hdr; 
-
-struct message_t {
-    struct message_hdr header;
-    char buf[1500];
-} message_t; 
-
-struct command_hdr {
-    uint8_t opcode;
-    uint8_t option_sf;
-    uint16_t buf_len;
-} __attribute__((__packed__)) command_hdr;
+comm_type parse_command(char *comm, char **tokens);
+void add_subbed_topic(uint8_t id, char *topic_name);
+int get_topic_id(char *topic_name);
+char *get_topic_name(uint8_t topic_id);
+int get_topic_idx(uint8_t topic_id);
+int verify_id(char *id, int tcp_sockfd);
+uint8_t subscribe_topic(char *topic_name, int sf, int tcp_sockfd);
+uint8_t unsubscribe_topic(uint8_t topic_id, int tcp_sockfd);
+void handle_incoming_msgs(char *buf, int msgs_no, int tot_len);
