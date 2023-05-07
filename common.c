@@ -42,7 +42,15 @@ int check_valid_uns_number(char *num)
 {
     char check_number[10];
     sprintf(check_number, "%hd", atoi(num));
-    if (strlen(num) != strlen(check_number)) {
+
+    int digit_no = 0;
+    for (int i = 0; i < strlen(num); i++) {
+        if (num[i] >= 48 && num[i] <= 57) {
+            digit_no += 1;
+        }
+    }
+
+    if (strlen(num) != strlen(check_number) || !digit_no) {
         return -1;
     }
 

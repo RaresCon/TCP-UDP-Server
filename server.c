@@ -66,7 +66,6 @@ int main(int argc, char *argv[])
         }
     }
 
-    // listen for incoming connection
 	if (listen(tcp_sockfd, BACKLOG) == -1) {
 		int retries = STD_RETRIES;
         while (listen(tcp_sockfd, BACKLOG) == -1 && retries) {
@@ -264,6 +263,7 @@ int main(int argc, char *argv[])
 				ll_free(&registered_users);
 				ll_free(&topics);
 				free(events_list);
+				shutdown(tcp_sockfd, SHUT_RDWR);
 				close(tcp_sockfd);
 				close(udp_sockfd);
 				close(epoll_fd);
@@ -307,6 +307,7 @@ int main(int argc, char *argv[])
 	ll_free(&registered_users);
 	ll_free(&topics);
 	free(events_list);
+	shutdown(tcp_sockfd, SHUT_RDWR);
 	close(tcp_sockfd);
 	close(udp_sockfd);
 	close(epoll_fd);

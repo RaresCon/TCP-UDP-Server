@@ -1,8 +1,6 @@
 #include "common.h"
 #include "client.h"
 
-#define STD_RETRIES 10
-
 int16_t current_port = -1;
 linked_list_t *subbed_topics;
 
@@ -132,7 +130,7 @@ int main(int argc, char *argv[])
 				fgets(command, BUFSIZ, stdin);
 
                 if ((req = parse_command(command, tokens)) == -1) {
-                    fprintf(stderr, "Invalid command. Please try again.\n");
+                    fprintf(stderr, ERR_COMM);
                     continue;
                 }
 
@@ -150,7 +148,7 @@ int main(int argc, char *argv[])
                         int topic_id = get_topic_id(tokens[1]);
 
                         if (topic_id == -1) {
-                            fprintf(stderr, "Requested topic isn't subscribed to. Please try again.\n");
+                            fprintf(stderr, ERR_NSUB);
                             continue;
                         }
 
@@ -164,17 +162,19 @@ int main(int argc, char *argv[])
                         int sf = check_valid_uns_number(tokens[2]);
 
                         if (sf == -1 || (sf != 0 && sf != 1)) {
-                            fprintf(stderr, "Invalid command. Please try again.\n");
+                            fprintf(stderr, ERR_COMM);
                             continue;
                         }
 
-                        uint8_t topic_id = subscribe_topic(tokens[1], atoi(tokens[2]), tcp_sockfd);
+                        uint8_t topic_id = subscribe_topic(tokens[1],
+                                                           atoi(tokens[2]),
+                                                           tcp_sockfd);
                         
                         if (topic_id == (uint8_t) -1) {
-                            fprintf(stderr, "Requested topic doesn't exist. Please try again.\n");
+                            fprintf(stderr, ERR_NOTP);
                             continue;
                         } else if (topic_id == (uint8_t) -2) {
-                            fprintf(stderr, "Already subscribed to this topic.\n");
+                            fprintf(stderr, ERR_ASUB);
                             continue;
                         }
 
@@ -183,7 +183,7 @@ int main(int argc, char *argv[])
                     }
                     break;
                     default:
-                        fprintf(stderr, "Invalid command. Please try again.\n");
+                        fprintf(stderr, ERR_COMM);
                         continue;
                     break;
                 }
@@ -385,30 +385,40 @@ void handle_incoming_msgs(char *buf, int msgs_no, int tot_len)
 
     int offset = 0;
     for (int i = 0; i < msgs_no; i++) {
+        char ip_addr[30];
         memcpy(&server_msg, buf + offset, sizeof(server_msg));
         char content[server_msg.buf_len];
         memcpy(content, buf + offset + sizeof(server_msg), server_msg.buf_len);
 
-        char ip_addr[30];
         if (!inet_ntop(AF_INET, &server_msg.ip_addr, ip_addr, sizeof(struct sockaddr_in))) {
             fprintf(stderr, "inet_ntop() failed. Message display may be affected\n");
         }
 
+
+        uint16_t ntoh_port = ntohs(server_msg.port);
         switch (server_msg.data_type) {
             case INT: {
-                printf(INT_MSG, ip_addr, server_msg.port, get_topic_name(server_msg.topic_id), *((int *)content));
+                printf(INT_MSG, ip_addr, ntoh_port,
+                                get_topic_name(server_msg.topic_id),
+                                *((int *)content));
             }
             break;
             case SHORT_REAL: {
-                printf(SR_MSG, ip_addr, server_msg.port, get_topic_name(server_msg.topic_id), *((float *)content));
+                printf(SR_MSG, ip_addr, ntoh_port,
+                               get_topic_name(server_msg.topic_id),
+                               *((float *)content));
             }
             break;
             case FLOAT: {
-                printf(FLT_MSG, ip_addr, server_msg.port, get_topic_name(server_msg.topic_id), *((double *)content));
+                printf(FLT_MSG, ip_addr, ntoh_port,
+                                get_topic_name(server_msg.topic_id),
+                                *((double *)content));
             }
             break;
             case STRING: {
-                printf(STR_MSG, ip_addr, server_msg.port, get_topic_name(server_msg.topic_id), content);
+                printf(STR_MSG, ip_addr, ntoh_port,
+                                get_topic_name(server_msg.topic_id),
+                                content);
             }
             break;
             default: {
