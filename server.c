@@ -27,23 +27,13 @@ int main(int argc, char *argv[])
 	}
 
     memset(&servaddr, 0, sizeof(servaddr));
-    servaddr.sin_family = AF_INET; // IPv4
+    servaddr.sin_family = AF_INET;
     servaddr.sin_addr.s_addr = INADDR_ANY;
     servaddr.sin_port = htons(current_port);
 
     /* TCP Socket INIT */
     tcp_sockfd = init_socket(AF_INET, SOCK_STREAM, 0);
 	if (tcp_sockfd == -1) {
-		exit(EXIT_FAILURE);
-	}
-
-	/* Setting TCP Socket as non-blocking */
-	int current_tcp_flags = fcntl(tcp_sockfd, F_GETFL, 0);
-	if (current_tcp_flags == -1) {
-		perror("fcntl(F_GETFL) failed.");
-		exit(EXIT_FAILURE);
-	} else if (fcntl(tcp_sockfd, F_SETFL, current_tcp_flags | O_NONBLOCK) == -1) {
-		perror("fcntl(F_SETFL) failed.");
 		exit(EXIT_FAILURE);
 	}
 
@@ -57,7 +47,8 @@ int main(int argc, char *argv[])
 
     if (bind(tcp_sockfd, (const struct sockaddr *)&servaddr, sizeof(servaddr)) < 0) {
         int retries = STD_RETRIES;
-        while (bind(tcp_sockfd, (const struct sockaddr *)&servaddr, sizeof(servaddr)) < 0 && retries) {
+        while (bind(tcp_sockfd, (const struct sockaddr *)&servaddr, sizeof(servaddr)) < 0
+			   && retries) {
             retries--;
         }
         if (!retries) {
@@ -89,7 +80,8 @@ int main(int argc, char *argv[])
 
     if (bind(udp_sockfd, (const struct sockaddr *)&servaddr, sizeof(servaddr)) < 0) {
         int retries = STD_RETRIES;
-        while (bind(udp_sockfd, (const struct sockaddr *)&servaddr, sizeof(servaddr)) < 0 && retries) {
+        while (bind(udp_sockfd, (const struct sockaddr *)&servaddr, sizeof(servaddr)) < 0
+			   && retries) {
             retries--;
         }
         if (!retries) {
@@ -98,6 +90,7 @@ int main(int argc, char *argv[])
         }
     }
 
+	/* EPoll INIT */
 	epoll_fd = init_epoll(MAXCONNS);
 	if (epoll_fd == -1) {
 		exit(EXIT_FAILURE);
@@ -150,7 +143,12 @@ int main(int argc, char *argv[])
 				}
 
 				struct command_hdr check_client;
-				recv_all(new_client_fd, &check_client, sizeof(struct command_hdr));
+				if (recv_all(new_client_fd, &check_client, sizeof(struct command_hdr)) <
+					sizeof(struct command_hdr)) {
+					fprintf(stderr, ERR_CONN);
+					close(new_client_fd);
+					continue;
+				}
 
 				if (check_client.opcode == ERR) {
 					fprintf(stderr, "Error opcode.\n");
@@ -160,14 +158,17 @@ int main(int argc, char *argv[])
 				} else if (check_client.opcode != CHECK_ID) {
 					fprintf(stderr, "Invalid opcode.\n");
 
-					send_command(new_client_fd, ERR, 0, 0);
+					if (send_command(new_client_fd, ERR, 0, 0) == -1) {
+						fprintf(stderr, ERR_CONN);
+					}
 					close(new_client_fd);
 					continue;
 				}
 
 				char *buf = malloc(check_client.buf_len);
-				if (!recv_all(new_client_fd, buf, check_client.buf_len)) {
-					fprintf(stderr, "New client closed connection before registering.\n");
+				if (recv_all(new_client_fd, buf, check_client.buf_len) <
+					check_client.buf_len) {
+					fprintf(stderr, ERR_CONN);
 					close(new_client_fd);
 					continue;
 				}
@@ -176,11 +177,17 @@ int main(int argc, char *argv[])
 				if (old_client && old_client->conned) {
 					printf("Client %s already connected.\n", buf);
 
-					send_command(new_client_fd, ERR, 0, 0);
+					if (send_command(new_client_fd, ERR, 0, 0) == -1) {
+						fprintf(stderr, ERR_CONN);
+					}
 					close(new_client_fd);
 					continue;
 				} else if (old_client) {
-					send_command(new_client_fd, OK, 1, 0);
+					if (send_command(new_client_fd, OK, 1, 0) == -1) {
+						fprintf(stderr, ERR_CONN);
+						close(new_client_fd);
+						continue;
+					}
 
 					old_client->fd = new_client_fd;
 					old_client->conned = 1;
@@ -191,7 +198,11 @@ int main(int argc, char *argv[])
 					ev.data.ptr = old_client;
 					rc = add_event(epoll_fd, old_client->fd, &ev);
 				} else {
-					send_command(new_client_fd, OK, 0, 0);
+					if (send_command(new_client_fd, OK, 0, 0) == -1) {
+						fprintf(stderr, ERR_CONN);
+						close(new_client_fd);
+						continue;
+					}
 
 					struct client *new_client = calloc(1, sizeof(struct client));
 					new_client->conned = 1;
@@ -213,7 +224,8 @@ int main(int argc, char *argv[])
 					continue;
 				}
 
-				printf("New client %s connected from %s:%d.\n", buf, ip_addr, new_client_addr.sin_port);
+				printf("New client %s connected from %s:%d.\n", buf, ip_addr,
+																ntohs(new_client_addr.sin_port));
 				free(buf);
 			} else if (events_list[i].data.fd == udp_sockfd) {
 				struct sockaddr_in udp_client;
@@ -274,7 +286,8 @@ int main(int argc, char *argv[])
 				struct client *curr_client = (struct client*)events_list[i].data.ptr;
 				struct command_hdr command_from_client;
 
-				rc = recv_all(curr_client->fd, &command_from_client, sizeof(command_from_client));
+				rc = recv_all(curr_client->fd, &command_from_client,
+							  sizeof(command_from_client));
 
 				if (!rc) {
 					printf("Client %s disconnected.\n", curr_client->id);
@@ -287,7 +300,11 @@ int main(int argc, char *argv[])
 				switch (command_from_client.opcode) {
 				case SUBSCRIBE: {
 					char *buf = malloc(command_from_client.buf_len);
-					recv_all(curr_client->fd, buf, command_from_client.buf_len);
+					if (recv_all(curr_client->fd, buf, command_from_client.buf_len) <
+						command_from_client.buf_len) {
+						fprintf(stderr, ERR_CONN);
+						continue;
+					}
 					sub_client(curr_client, command_from_client.option, buf);
 					free(buf);
 				}
@@ -601,7 +618,11 @@ void sub_client(struct client *curr_client, uint8_t sf, char *topic_name)
 	uint8_t id = get_topic_id(topic_name);
 
 	if (id == (uint8_t) -1) {
-		send_command(curr_client->fd, ERR, 0, 0);
+		if (send_command(curr_client->fd, ERR, 0, 0) == -1) {
+			fprintf(stderr, ERR_CONN);
+			close(curr_client->fd);
+			curr_client->conned = 0;
+		}
 		return;
 	}
 
@@ -611,7 +632,11 @@ void sub_client(struct client *curr_client, uint8_t sf, char *topic_name)
 	client_topic.sf = sf;
 	ll_add_nth_node(curr_client->client_topics, 0, &client_topic);
 
-	send_command(curr_client->fd, OK, id, 0);
+	if (send_command(curr_client->fd, OK, id, 0) == -1) {
+		fprintf(stderr, ERR_CONN);
+		close(curr_client->fd);
+		curr_client->conned = 0;
+	}
 }
 
 void unsub_client(struct client *curr_client, uint8_t topic_id)
@@ -619,10 +644,18 @@ void unsub_client(struct client *curr_client, uint8_t topic_id)
 	int topic_idx = get_topic_idx(curr_client->client_topics, topic_id);
 
 	if (topic_idx == -1) {
-		send_command(curr_client->fd, ERR, 0, 0);
+		if (send_command(curr_client->fd, ERR, 0, 0) == -1) {
+			fprintf(stderr, ERR_CONN);
+			close(curr_client->fd);
+			curr_client->conned = 0;
+		}
 		return;
 	}
 	ll_remove_nth_node(curr_client->client_topics, topic_idx);
 
-	send_command(curr_client->fd, OK, 0, 0);
+	if (send_command(curr_client->fd, OK, 0, 0) == -1) {
+		fprintf(stderr, ERR_CONN);
+		close(curr_client->fd);
+		curr_client->conned = 0;
+	} 
 }

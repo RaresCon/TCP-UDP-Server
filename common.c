@@ -1,5 +1,66 @@
 #include "common.h"
 
+comm_type parse_command(char *comm, char **tokens)
+{
+    int nr;
+	char *token, *nl = strchr(comm, '\n');
+	token = strtok(comm, " ");
+	short i = 0;
+
+	if (nl) {
+		*nl = '\0';
+    }
+
+	while (token && i != 3) {
+		tokens[i++] = token;
+		token = strtok(NULL, " ");
+	}
+	nr = i;
+
+	if (strtok(NULL, " ")) {
+		return ERR;
+	}
+
+    if (!strcmp(tokens[0], "exit")) {
+        if (nr == 1) {
+            return EXIT;
+        }
+        return ERR;
+    } else if (!strcmp(tokens[0], "unsubscribe")) {
+        if (nr == 2) {
+            return UNSUBSCRIBE;
+        }
+        return ERR;
+    } else if (!strcmp(tokens[0], "subscribe")) {
+        if (nr == 3) {
+            return SUBSCRIBE;
+        }
+        return ERR;
+    }
+
+    return ERR;
+}
+
+int check_valid_uns_number(char *num)
+{
+    char check_number[10];
+    sprintf(check_number, "%hd", atoi(num));
+
+    int digit_no = 0;
+    for (int i = 0; i < strlen(num); i++) {
+        if (num[i] >= 48 && num[i] <= 57) {
+            digit_no += 1;
+        }
+    }
+
+    if (strlen(num) != strlen(check_number) ||
+        !digit_no || atoi(num) < 0) {
+        return -1;
+    }
+
+    return atoi(num);
+}
+
 int send_all(int sockfd, void *buf, int len)
 {
 	int sent_len = 0;
@@ -38,23 +99,17 @@ int recv_all(int sockfd, void *buf, int len)
     return recv_len;
 }
 
-int check_valid_uns_number(char *num)
+int send_command(int sockfd, comm_type type, uint8_t option, uint16_t buf_len)
 {
-    char check_number[10];
-    sprintf(check_number, "%hd", atoi(num));
+    struct command_hdr command;
+    command.opcode = type;
+    command.option = option;
+    command.buf_len = buf_len;
 
-    int digit_no = 0;
-    for (int i = 0; i < strlen(num); i++) {
-        if (num[i] >= 48 && num[i] <= 57) {
-            digit_no += 1;
-        }
-    }
-
-    if (strlen(num) != strlen(check_number) || !digit_no) {
+    if (send_all(sockfd, &command, sizeof(struct command_hdr)) < sizeof(struct command_hdr)) {
         return -1;
     }
-
-    return atoi(num);
+    return 0;
 }
 
 int init_socket(int addr_fam, int sock_type, int flags)
@@ -103,18 +158,5 @@ int add_event(int epoll_fd, int ev_fd, struct epoll_event *new_ev)
             return -1;
         }
 	}
-    return 0;
-}
-
-int send_command(int sockfd, comm_type type, uint8_t option, uint16_t buf_len)
-{
-    struct command_hdr command;
-    command.opcode = type;
-    command.option = option;
-    command.buf_len = buf_len;
-
-    if (send_all(sockfd, &command, sizeof(struct command_hdr)) < sizeof(struct command_hdr)) {
-        return -1;
-    }
     return 0;
 }

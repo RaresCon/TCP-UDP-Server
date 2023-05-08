@@ -5,29 +5,19 @@
 #include <string.h>
 #include <netdb.h>
 
+#define USAGE "Usage: %s <ID> <SERVER_IP> <PORT>\n"
 
 #define ERR_COMM "Invalid command. Please try again.\n"
 #define ERR_ASUB "Already subscribed to this topic.\n"
 #define ERR_NSUB "Requested topic isn't subscribed to. Please try again.\n"
 #define ERR_NOTP "Requested topic doesn't exist. Please try again.\n"
+#define ERR_CONN "Server closed connection.\n"
 
 
 #define INT_MSG "%s:%d - %s - INT - %d\n"           /* format for INT type */
 #define SR_MSG "%s:%d - %s - SHORT_REAL - %.2f\n"   /* format for SHORT_REAL type */
 #define FLT_MSG "%s:%d - %s - FLOAT - %lf\n"        /* format for FLOAT type */
 #define STR_MSG "%s:%d - %s - STRING - %s\n"        /* format for STRING type */
-
-
-/*
- * @brief Function to parse a command given at STDIN
- * 
- * @param comm the given command
- * @param tokens the array in which the function will save
- * the tokens of the command
- * 
- * @return the command type if the command is valid, ERR otherwise
- */
-comm_type parse_command(char *comm, char **tokens);
 
 
 /*

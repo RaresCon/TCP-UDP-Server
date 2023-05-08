@@ -48,86 +48,110 @@ struct topic {
 
 /* Message header */
 struct message_hdr {
-    uint32_t ip_addr;   /* IP address of the UDP client */
-    uint16_t port;      /* Port of the UDP client */
-    uint8_t topic_id;   /* Message's id topic */
-    uint8_t data_type;  /* Data type of the message */
-    uint16_t buf_len;   /* Message length after header */
+    uint32_t ip_addr;       /* IP address of the UDP client */
+    uint16_t port;          /* Port of the UDP client */
+    uint8_t topic_id;       /* Message's id topic */
+    uint8_t data_type;      /* Data type of the message */
+    uint16_t buf_len;       /* Message length after header */
 } __attribute__((__packed__));
 
 
 /*
- * @brief Function to get a stored client by id
+ * @brief Utility function to check if a string contains only
+ * a valid unsigned number
  * 
- * @param id the id of a client
+ * @param num the string that will be checked
  * 
- * @return pointer to the client structure or NULL if there
- * is no client registered on the server with the given id
+ * @return the number if it is valid, -1 otherwise
  */
 int check_valid_uns_number(char *num);
 
 
 /*
- * @brief Function to get a stored client by id
+ * @brief Function to parse a command given at STDIN
  * 
- * @param id the id of a client
+ * @param comm the given command
+ * @param tokens the array in which the function will save
+ * the tokens of the command
  * 
- * @return pointer to the client structure or NULL if there
- * is no client registered on the server with the given id
+ * @return the command type if the command is valid, ERR otherwise
+ */
+comm_type parse_command(char *comm, char **tokens);
+
+
+/*
+ * @brief Function to force `send` to work with a fixed length.
+ * This function will work with blocking/non-blocking TCP sockets
+ * without being concerned about the size of the socket buffer
+ * 
+ * @param sockfd the socket on which to send the buffer
+ * @param buf the buffer to be sent
+ * @param len the length of the buffer
+ * 
+ * @return the number of bytes sent
  */
 int send_all(int sockfd, void *buf, int len);
 
 
 /*
- * @brief Function to get a stored client by id
+ * @brief Function to force `send` to work with a fixed length.
+ * This function will work with blocking/non-blocking TCP sockets
+ * without being concerned about the size of the socket buffer
  * 
- * @param id the id of a client
+ * @param sockfd the socket from which to receive the buffer
+ * @param buf the buffer to which the function will save received data
+ * @param len the length of the buffer to be received
  * 
- * @return pointer to the client structure or NULL if there
- * is no client registered on the server with the given id
+ * @return the number of bytes received
  */
 int recv_all(int sockfd, void *buf, int len);
 
 
 /*
- * @brief Function to get a stored client by id
+ * @brief Function to send a request/response 
  * 
- * @param id the id of a client
+ * @param sockfd the socket on which to send
+ * @param type type of request/response
+ * @param option optional data to store in the `option` field
+ * @param buf_len length of the buffer coming after this header, if any
  * 
- * @return pointer to the client structure or NULL if there
- * is no client registered on the server with the given id
+ * @return 0 if the request/response was sent successfully, -1 otherwise
  */
 int send_command(int sockfd, comm_type type, uint8_t option, uint16_t buf_len);
 
 
 /*
- * @brief Function to get a stored client by id
+ * @brief Function to create a new socket
  * 
- * @param id the id of a client
+ * @param addr_fam the address family for the socket
+ * @param sock_type the type of socket that will be created
+ * @param flags the flags to set for the socket
  * 
- * @return pointer to the client structure or NULL if there
- * is no client registered on the server with the given id
+ * @return file descriptor of the socke if it was
+ * successfully created, -1 otherwise
  */
 int init_socket(int addr_fam, int sock_type, int flags);
 
 
 /*
- * @brief Function to get a stored client by id
+ * @brief Function to create an epoll handler
  * 
- * @param id the id of a client
+ * @param max_events the maximum number of events that
+ * could be added to the handler
  * 
- * @return pointer to the client structure or NULL if there
- * is no client registered on the server with the given id
+ * @return file descriptor of the handler if it was
+ * successfully created, -1 otherwise
  */
 int init_epoll(int max_events);
 
 
 /*
- * @brief Function to get a stored client by id
+ * @brief Function to add a new event to an epoll handler
  * 
- * @param id the id of a client
+ * @param epoll_fd the epoll handler
+ * @param ev_fd file descriptor for which this event is added
+ * @param new_ev new event structure to be added to epoll
  * 
- * @return pointer to the client structure or NULL if there
- * is no client registered on the server with the given id
+ * @return 0 if the event was added successfully, -1 otherwise
  */
 int add_event(int epoll_fd, int ev_fd, struct epoll_event *new_ev);

@@ -8,6 +8,8 @@
 #define MAXCONNS 100
 #define BACKLOG 200
 
+#define ERR_CONN "The client closed connection\n"
+
 struct subbed_topic {
     uint8_t sf;         /* Store-and-Forward flag */
     struct topic info;  /* info about the subscribed topic */

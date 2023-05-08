@@ -15,7 +15,7 @@ int main(int argc, char *argv[])
 	struct epoll_event *events_list;
 
     if (argc != 4) {
-        fprintf(stderr, "Usage: %s <ID> <SERVER_IP> <PORT>\n", argv[0]);
+        fprintf(stderr, USAGE, argv[0]);
         exit(EXIT_FAILURE);
     }
 
@@ -64,8 +64,14 @@ int main(int argc, char *argv[])
         }
     }
 
-    if ((rc = verify_id(strdup(argv[1]), tcp_sockfd)) == -1) {
+    rc = verify_id(strdup(argv[1]), tcp_sockfd);
+    if (rc == -1) {
         fprintf(stderr, "Client %s already connected.\n", argv[1]);
+        close(tcp_sockfd);
+
+        exit(EXIT_FAILURE);
+    } else if (rc == -2) {
+        fprintf(stderr, ERR_CONN);
         close(tcp_sockfd);
 
         exit(EXIT_FAILURE);
@@ -120,7 +126,10 @@ int main(int argc, char *argv[])
                     continue;
                 }
 
-                recv_all(tcp_sockfd, buf, tot_len);
+                if (recv_all(tcp_sockfd, buf, tot_len) < tot_len) {
+                    fprintf(stderr, "The messages were not successfully received.\n");
+                    continue;
+                }
 
                 handle_incoming_msgs(buf, msgs_no, tot_len);
 			} else if (events_list[i].data.fd == STDIN_FILENO) {
@@ -176,6 +185,15 @@ int main(int argc, char *argv[])
                         } else if (topic_id == (uint8_t) -2) {
                             fprintf(stderr, ERR_ASUB);
                             continue;
+                        } else if (topic_id == (uint8_t) -3) {
+                            fprintf(stderr, ERR_CONN);
+
+                            close(tcp_sockfd);
+                            close(epoll_fd);
+                            free(events_list);
+                            free(tokens);
+
+                            exit(EXIT_FAILURE);
                         }
 
                         add_subbed_topic(topic_id, tokens[1]);
@@ -197,47 +215,6 @@ int main(int argc, char *argv[])
     free(events_list);
 
     return 0;
-}
-
-comm_type parse_command(char *comm, char **tokens)
-{
-    int nr;
-	char *token, *nl = strchr(comm, '\n');
-	token = strtok(comm, " ");
-	short i = 0;
-
-	if (nl) {
-		*nl = '\0';
-    }
-
-	while (token && i != 3) {
-		tokens[i++] = token;
-		token = strtok(NULL, " ");
-	}
-	nr = i;
-
-	if (strtok(NULL, " ")) {
-		return ERR;
-	}
-
-    if (!strcmp(tokens[0], "exit")) {
-        if (nr == 1) {
-            return EXIT;
-        }
-        return ERR;
-    } else if (!strcmp(tokens[0], "unsubscribe")) {
-        if (nr == 2) {
-            return UNSUBSCRIBE;
-        }
-        return ERR;
-    } else if (!strcmp(tokens[0], "subscribe")) {
-        if (nr == 3) {
-            return SUBSCRIBE;
-        }
-        return ERR;
-    }
-
-    return ERR;
 }
 
 void add_subbed_topic(uint8_t id, char *topic_name)
@@ -301,10 +278,24 @@ int verify_id(char *id, int tcp_sockfd)
 {
     struct command_hdr res;
 
-    send_command(tcp_sockfd, CHECK_ID, 0, strlen(id) + 1);
-    send_all(tcp_sockfd, id, strlen(id) + 1);
+    if (send_command(tcp_sockfd, CHECK_ID, 0, strlen(id) + 1) == -1) {
+        fprintf(stderr, ERR_CONN);
+        free(id);
+        return -2;
+    }
+    
+    if (send_all(tcp_sockfd, id, strlen(id) + 1) < strlen(id) + 1) {
+        fprintf(stderr, ERR_CONN);
+        free(id);
+        return -2;
+    }
 
-    recv_all(tcp_sockfd, &res, sizeof(struct command_hdr));
+    if (recv_all(tcp_sockfd, &res, sizeof(struct command_hdr)) <
+        sizeof(struct command_hdr)) {
+        fprintf(stderr, ERR_CONN);
+        free(id);
+        return -2;
+    }
 
     if (res.opcode == (uint8_t) ERR) {
         free(id);
@@ -314,7 +305,11 @@ int verify_id(char *id, int tcp_sockfd)
         char header[sizeof(topics_no) + sizeof(tot_len)];
         char buf[BUFSIZ];
 
-        recv_all(tcp_sockfd, header, sizeof(topics_no) + sizeof(tot_len));
+        if (recv_all(tcp_sockfd, header, sizeof(topics_no) + sizeof(tot_len)) <
+            sizeof(topics_no) + sizeof(tot_len)) {
+            fprintf(stderr, ERR_CONN);
+            return -2;
+        }
         memcpy(&topics_no, header, sizeof(topics_no));
         memcpy(&tot_len, header + sizeof(topics_no), sizeof(tot_len));
 
@@ -323,7 +318,10 @@ int verify_id(char *id, int tcp_sockfd)
             return 0;
         }
 
-        recv_all(tcp_sockfd, buf, tot_len);
+        if (recv_all(tcp_sockfd, buf, tot_len) < tot_len) {
+            fprintf(stderr, ERR_CONN);
+            return -2;
+        }
 
         int offset = 0;
         for (int i = 0; i < topics_no; i++) {
@@ -350,10 +348,21 @@ uint8_t subscribe_topic(char *topic_name, int sf, int tcp_sockfd)
     }
 
     struct command_hdr sub_topic;
-    send_command(tcp_sockfd, SUBSCRIBE, sf, strlen(topic_name) + 1);
-    send_all(tcp_sockfd, topic_name, strlen(topic_name) + 1);
+    if (send_command(tcp_sockfd, SUBSCRIBE, sf, strlen(topic_name) + 1) == -1) {
+        fprintf(stderr, ERR_CONN);
+        return -3;
+    }
 
-    recv_all(tcp_sockfd, &sub_topic, sizeof(struct command_hdr));
+    if (send_all(tcp_sockfd, topic_name, strlen(topic_name) + 1) < strlen(topic_name) + 1) {
+        fprintf(stderr, ERR_CONN);
+        return -3;
+    }
+
+    if (recv_all(tcp_sockfd, &sub_topic, sizeof(struct command_hdr)) <
+        sizeof(struct command_hdr)) {
+        fprintf(stderr, ERR_CONN);
+        return -3;
+    }
 
     if (sub_topic.opcode == (uint8_t) ERR) {
         return -1;
