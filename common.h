@@ -40,12 +40,6 @@ struct command_hdr {
     uint16_t buf_len;       /* Optional lenght field for buffer after header */
 } __attribute__((__packed__));
 
-struct topic {
-    uint8_t id;             /* Id of topic */
-    char topic_name[51];    /* Name of topic */
-} __attribute__((__packed__));
-
-
 /* Message header */
 struct message_hdr {
     uint32_t ip_addr;       /* IP address of the UDP client */
@@ -53,6 +47,11 @@ struct message_hdr {
     uint8_t topic_id;       /* Message's id topic */
     uint8_t data_type;      /* Data type of the message */
     uint16_t buf_len;       /* Message length after header */
+} __attribute__((__packed__));
+
+struct topic {
+    uint8_t id;             /* Id of topic */
+    char topic_name[51];    /* Name of topic */
 } __attribute__((__packed__));
 
 

@@ -32,7 +32,7 @@ If the client has a new id, then the server registers this client and returns an
 
 After the connection is established, the client can use **three commands**, as follows:
 
-- `subscribe <TOPIC_NAME> <SF>`, where the topic name must be a registered topic on the server or a topic to which the client is not already subscribed, otherwise this command will return an error. The Store-and-Forward flag informs the server to hold the messages that arrive for that topic in a personal message queue for when the client reconnects. After subscribing to a topic, the client stores in a list the new topic
+- `subscribe <TOPIC_NAME> <SF>`, where the topic name must be a registered topic on the server (if no message was ever received by the server, then the topic doesn't exists yet) or a topic to which the client is not already subscribed, otherwise this command will return an error. The Store-and-Forward flag informs the server to hold the messages that arrive for that topic in a personal message queue for when the client reconnects. After subscribing to a topic, the client stores in a list the new topic
 
 - `unsubscribe <TOPIC_NAME>`, where the topic name must be a topic to which the client is subscribed locally, without sending a request to the server, otherwise it will return an error
 
@@ -52,3 +52,24 @@ The server receives messages from **UDP clients** and handles them for the clien
 
 ## **Communication Protocol and Efficiency** ##
 
+There are two protocols used during the communication of the server and client, one being used to control both of them while running and one being the way the server sends the messages to the client after receiving them from an UDP client. These protocols help with the efficiency of the communication itself, making data more compact and only sending the needed information.
+
+It's important to note before explaining the protocols that **the topics are stored as ids on the server and in the client**, so the server and the client **don't need the name of the topic** which can be 50 bytes long to understand the messages, but only a byte (an `uint8_t` which can then be extended to 2 bytes if the number of topics need it). As an improvement to this, I would have liked to use a hashing function so the server can delete or add manually topics and it wouldn't rely on a simple number given by the size of the list.
+
+**First protocol** is based on the `command_hdr` structure which allows the client to send requests to the server and the server to send responses back to the client. It has an `opcode` field that represents the **operation of the request or the response type**, an `option` field that can hold an **optional flag for the operation or response** and a `buf_len` field that represents the **length of an optional buffer coming after this header** (inspired by HTTP protocol).
+
+**Second protocol** is based on a simplier way of storing and sending a message to a client by using the `message_hdr` structure, that lets **the server and client represent an UDP client and its message without using a literal string**, but smaller data types. The `ip_addr` and `port` fields are used to **print the IP adress and port of the UDP client** sending the message, the `topic_id` and `data_type` fields **help the client understand what is the topic and data type contained in the message**, and at last, the `buf_len` field representing the size of the message coming after this header in a larger buffer. It becomes easy to separate information this way and **even if the TCP protocol concatenates data**, it will still function as inteneded without any errors.
+
+When a longer buffer containing more than one message is sent, the server puts all messages one after the other in a larger buffer, then sends a smaller header containing the number of messages and the total length of this larger buffer to the client, so the client receives on the socket exactly this length. After having this buffer, thee client deconstructs the messages and prints them for the user.
+
+These structures can be found inside the `common.h` file.
+
+---
+
+## **Things to improve** ##
+
+I could do some things in a better way, such as the storing of topics by a hash of the name instead of an id, other commands for the client and the server to have more control over the data and information. These would come in a later update, so stay tuned.
+
+---
+## **Copy-Right 2023** ##
+---
