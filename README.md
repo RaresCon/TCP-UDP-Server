@@ -46,6 +46,9 @@ To set the **Store-and-Forward flag** to 0 or 1, the client must unsubscribe fro
 
 The server has only one command, `exit`, which closes all the handlers and **shuts down the TCP listening socket**, frees the used memory and exits.
 
+The server receives messages from **UDP clients** and handles them for the clients, sending a message instantly if a client is connected to the server, or stores it to be sent at reconnection if the client is subscribed to its topic with **Store-and-Forward active**. The message is sent to the client in a compact and efficient way, presented below.
+
 ---
 
-## **Communication Protocl and Efficiency** ##
+## **Communication Protocol and Efficiency** ##
+

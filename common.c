@@ -160,3 +160,12 @@ int add_event(int epoll_fd, int ev_fd, struct epoll_event *new_ev)
 	}
     return 0;
 }
+
+int rm_event(int epoll_fd, int ev_fd)
+{
+    if (epoll_ctl(epoll_fd, EPOLL_CTL_DEL, ev_fd, NULL) < 0) {
+        perror("epoll_ctl(EPOLL_CTL_DEL) failed. Aborting...\n");
+        return -1;
+    }
+    return 0;
+}

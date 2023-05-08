@@ -196,7 +196,12 @@ int main(int argc, char *argv[])
 
 					ev.events = EPOLLIN;
 					ev.data.ptr = old_client;
-					rc = add_event(epoll_fd, old_client->fd, &ev);
+					if (add_event(epoll_fd, old_client->fd, &ev) == -1) {
+						close(old_client->fd);
+						old_client->conned = 0;
+						old_client->fd = -1;
+						continue;
+					}
 				} else {
 					if (send_command(new_client_fd, OK, 0, 0) == -1) {
 						fprintf(stderr, ERR_CONN);
@@ -211,10 +216,17 @@ int main(int argc, char *argv[])
 					new_client->client_topics = ll_create(sizeof(struct subbed_topic));
 					new_client->msg_queue = ll_create(sizeof(struct message_t));
 
-					ll_add_nth_node(registered_users, 0, &new_client);
 					ev.events = EPOLLIN;
 					ev.data.ptr = new_client;
-					rc = add_event(epoll_fd, new_client->fd, &ev);
+					if (add_event(epoll_fd, new_client->fd, &ev) == -1) {
+						ll_free(&new_client->client_topics);
+						ll_free(&new_client->msg_queue);
+						free(new_client);
+						close(new_client_fd);
+
+						continue;
+					}
+					ll_add_nth_node(registered_users, 0, &new_client);
 				}
 
 				char ip_addr[30];
@@ -292,8 +304,9 @@ int main(int argc, char *argv[])
 				if (!rc) {
 					printf("Client %s disconnected.\n", curr_client->id);
 					curr_client->conned = 0;
-					epoll_ctl(epoll_fd, EPOLL_CTL_DEL, events_list[i].data.fd, NULL);
+					rm_event(epoll_fd, curr_client->fd);
 					close(curr_client->fd);
+					curr_client->fd = -1;
 					continue;
 				}
 
@@ -526,7 +539,15 @@ void send_subbed_topics(struct client *curr_client)
 	char header[sizeof(topics_no) + sizeof(tot_len)];
 	memcpy(header, &topics_no, sizeof(topics_no));
 	memcpy(header + sizeof(topics_no), &tot_len, sizeof(tot_len));
-	send_all(curr_client->fd, header, sizeof(topics_no) + sizeof(tot_len));
+	if (send_all(curr_client->fd, header, sizeof(topics_no) + sizeof(tot_len)) <
+		sizeof(topics_no) + sizeof(tot_len)) {
+		fprintf(stderr, ERR_CONN);
+		curr_client->conned = 0;
+		close(curr_client->fd);
+		curr_client->fd = -1;
+		
+		return;
+	}
 
 	if (topics_no == 0) {
 		return;
@@ -549,10 +570,15 @@ void send_subbed_topics(struct client *curr_client)
 		head = head->next;
 	}
 
-	send_all(curr_client->fd, buf, tot_len);
+	if (send_all(curr_client->fd, buf, tot_len) < tot_len) {
+		fprintf(stderr, ERR_CONN);
+		curr_client->conned = 0;
+		close(curr_client->fd);
+		curr_client->fd = -1;
+	}
 }
 
-void send_msgs(int client_fd, linked_list_t *msgs)
+void send_msgs(struct client *curr_client, linked_list_t *msgs)
 {
 	int msgs_no = ll_get_size(msgs);
 	int tot_len = get_msgs_size(msgs);
@@ -560,7 +586,15 @@ void send_msgs(int client_fd, linked_list_t *msgs)
 	char header[sizeof(msgs_no) + sizeof(tot_len)];
 	memcpy(header, &msgs_no, sizeof(msgs_no));
 	memcpy(header + sizeof(msgs_no), &tot_len, sizeof(tot_len));
-	send_all(client_fd, header, sizeof(msgs_no) + sizeof(tot_len));
+	if (send_all(curr_client->fd, header, sizeof(msgs_no) + sizeof(tot_len))
+		< sizeof(msgs_no) + sizeof(tot_len)) {
+		fprintf(stderr, ERR_CONN);
+		curr_client->conned = 0;
+		close(curr_client->fd);
+		curr_client->fd = -1;
+
+		return;
+	}
 
 	int offset = 0;
 	char buf[BUFSIZ];
@@ -576,7 +610,12 @@ void send_msgs(int client_fd, linked_list_t *msgs)
 		head = head->next;
 	}
 
-	send_all(client_fd, buf, tot_len);
+	if (send_all(curr_client->fd, buf, tot_len) < tot_len) {
+		fprintf(stderr, ERR_CONN);
+		curr_client->conned = 0;
+		close(curr_client->fd);
+		curr_client->fd = -1;
+	}
 }
 
 void handle_msg(struct message_t new_msg)
@@ -590,7 +629,7 @@ void handle_msg(struct message_t new_msg)
 		
 		if (get_topic_idx(curr_client->client_topics, new_msg.header.topic_id) != -1 &&
 			curr_client->conned) {
-			send_msgs(curr_client->fd, tmp);
+			send_msgs(curr_client, tmp);
 		} else if (!curr_client->conned &&
 				   get_topic_sf(curr_client->client_topics, new_msg.header.topic_id) == (uint8_t) 1) {
 			ll_add_nth_node(curr_client->msg_queue, ll_get_size(curr_client->msg_queue), &new_msg);
@@ -609,7 +648,7 @@ void handle_sf_queue(struct client *curr_client)
 		return;
 	}
 
-	send_msgs(curr_client->fd, msg_queue);
+	send_msgs(curr_client, msg_queue);
 	ll_free_elems(&curr_client->msg_queue);
 }
 
@@ -648,6 +687,7 @@ void unsub_client(struct client *curr_client, uint8_t topic_id)
 			fprintf(stderr, ERR_CONN);
 			close(curr_client->fd);
 			curr_client->conned = 0;
+			curr_client->fd = -1;
 		}
 		return;
 	}
@@ -657,5 +697,6 @@ void unsub_client(struct client *curr_client, uint8_t topic_id)
 		fprintf(stderr, ERR_CONN);
 		close(curr_client->fd);
 		curr_client->conned = 0;
+		curr_client->fd = -1;
 	} 
 }

@@ -11,8 +11,8 @@
 #define ERR_CONN "The client closed connection\n"
 
 struct subbed_topic {
-    uint8_t sf;         /* Store-and-Forward flag */
-    struct topic info;  /* info about the subscribed topic */
+uint8_t sf;                       /* Store-and-Forward flag */
+    struct topic info;            /* info about the subscribed topic */
 } __attribute__((__packed__));
 
 struct client {
@@ -24,8 +24,8 @@ struct client {
 };
 
 struct message_t {
-    struct message_hdr header; /* header of a message */
-    char buf[1501];            /* the message */
+    struct message_hdr header;    /* header of a message */
+    char buf[1501];               /* the message */
 };
 
 
@@ -54,10 +54,10 @@ int get_msgs_size(linked_list_t *msg_queue);
 /*
  * @brief Function to send a list of messages to a client
  * 
- * @param client_fd the socket of the client
+ * @param curr_client the client to which the messages are sent
  * @param msgs the list of messages to be sent
  */
-void send_msgs(int client_fd, linked_list_t *msgs);
+void send_msgs(struct client *curr_client, linked_list_t *msgs);
 
 
 /*

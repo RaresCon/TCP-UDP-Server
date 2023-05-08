@@ -155,3 +155,14 @@ int init_epoll(int max_events);
  * @return 0 if the event was added successfully, -1 otherwise
  */
 int add_event(int epoll_fd, int ev_fd, struct epoll_event *new_ev);
+
+
+/*
+ * @brief Function to remove an event from an epoll handler
+ * 
+ * @param epoll_fd the epoll handler
+ * @param ev_fd file descriptor for which this event is added
+ * 
+ * @return 0 if the event was removed successfully, -1 otherwise
+ */
+int rm_event(int epoll_fd, int ev_fd);
