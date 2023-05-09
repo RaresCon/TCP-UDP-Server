@@ -3,6 +3,7 @@
 
 int16_t current_port = -1;
 linked_list_t *subbed_topics;
+linked_list_t *history;
 
 int main(int argc, char *argv[])
 {
@@ -10,6 +11,7 @@ int main(int argc, char *argv[])
     int rc;
 	int tcp_sockfd, epoll_fd;
     subbed_topics = ll_create(sizeof(struct topic));
+    history = ll_create(sizeof(char **));
     struct sockaddr_in servaddr;
 	struct epoll_event ev;
 	struct epoll_event *events_list;
@@ -149,7 +151,19 @@ int main(int argc, char *argv[])
                 }
 
                 switch (req) {
-                    case UNSUBSCRIBE: {
+                    case REQ_TOPICS: {
+                        rc = show_available_topics(tcp_sockfd);
+                        if (rc == -1) {
+                            close(tcp_sockfd);
+                            close(epoll_fd);
+                            free(events_list);
+                            free(tokens);
+
+                            exit(EXIT_SUCCESS);
+                        }
+                    }
+                    break;
+                    case REQ_UNSUB: {
                         int topic_id = get_topic_id(tokens[1]);
 
                         if (topic_id == 0) {
@@ -157,13 +171,24 @@ int main(int argc, char *argv[])
                             continue;
                         }
 
-                        unsubscribe_topic(topic_id, tcp_sockfd);
+                        rc = unsubscribe_topic(topic_id, tcp_sockfd);
+                        if (rc == -1) {
+                            fprintf(stderr, "Unsubscribe unavailable.\n");
+                            continue;
+                        } else if (rc == -2) {
+                            close(tcp_sockfd);
+                            close(epoll_fd);
+                            free(events_list);
+                            free(tokens);
+
+                            exit(EXIT_SUCCESS);
+                        }
                         ll_remove_nth_node(subbed_topics, get_topic_idx(topic_id));
 
                         printf("Unsubscribed from topic.\n");
                     }
                     break;
-                    case SUBSCRIBE: {
+                    case REQ_SUB: {
                         int sf = check_valid_uns_number(tokens[2]);
 
                         if (strlen(tokens[1]) > 50) {
@@ -201,13 +226,24 @@ int main(int argc, char *argv[])
                         printf("Subscribed to topic.\n");
                     }
                     break;
+                    case REQ_HISTORY: {
+                        show_history();
+                    }
+                    break;
+                    case REQ_SUBBED: {
+                        show_client_topics();
+                    }
+                    break;
+                    case REQ_SAVE:
+                        save_history();
+                    break;
                     case EXIT: {
                         close(tcp_sockfd);
                         close(epoll_fd);
                         free(events_list);
                         free(tokens);
 
-                        return 0;
+                        exit(EXIT_SUCCESS);
                     }
                     break;
                     default:
@@ -232,9 +268,21 @@ comm_type parse_command(int nr, char **tokens)
     if (!strcmp(tokens[0], "exit") && nr == 1) {
         return EXIT;
     } else if (!strcmp(tokens[0], "unsubscribe") && nr == 2) {
-        return UNSUBSCRIBE;
+        return REQ_UNSUB;
     } else if (!strcmp(tokens[0], "subscribe") && nr == 3) {
-        return SUBSCRIBE;
+        return REQ_SUB;
+    } else if (!strcmp(tokens[0], "show") && nr == 2) {
+        if (!strcmp(tokens[1], "server_topics")) {
+            return REQ_TOPICS;
+        } else if (!strcmp(tokens[1], "history")) {
+            return REQ_HISTORY;
+        } else if (!strcmp(tokens[1], "my_topics")) {
+            return REQ_SUBBED;
+        }
+    } else if (!strcmp(tokens[0], "save")) {
+        if (!strcmp(tokens[1], "history")) {
+            return REQ_SAVE;
+        }
     }
 
     return ERR;
@@ -301,7 +349,7 @@ int verify_id(char *id, int tcp_sockfd)
 {
     struct command_hdr res;
 
-    if (send_command(tcp_sockfd, CHECK_ID, 0, strlen(id) + 1) == -1) {
+    if (send_command(tcp_sockfd, REQ_CHECK_ID, 0, strlen(id) + 1) == -1) {
         fprintf(stderr, ERR_CONN);
         free(id);
         return -2;
@@ -371,7 +419,7 @@ uint32_t subscribe_topic(char *topic_name, int sf, int tcp_sockfd)
     }
 
     struct command_hdr sub_topic;
-    if (send_command(tcp_sockfd, SUBSCRIBE, sf, strlen(topic_name) + 1) == -1) {
+    if (send_command(tcp_sockfd, REQ_SUB, sf, strlen(topic_name) + 1) == -1) {
         fprintf(stderr, ERR_CONN);
         return -3;
     }
@@ -402,14 +450,138 @@ uint32_t unsubscribe_topic(uint32_t topic_id, int tcp_sockfd)
     }
 
     struct command_hdr unsub_topic;
-    send_command(tcp_sockfd, UNSUBSCRIBE, topic_id, 0);
-    recv_all(tcp_sockfd, &unsub_topic, sizeof(struct command_hdr));
+    send_command(tcp_sockfd, REQ_UNSUB, topic_id, 0);
+    if (recv_all(tcp_sockfd, &unsub_topic, sizeof(struct command_hdr)) <
+        sizeof(struct command_hdr)) {
+        fprintf(stderr, ERR_CONN);
+        return -2;
+    }
 
     if (unsub_topic.opcode == (uint8_t) ERR) {
         return -1;
     }
 
     return unsub_topic.option;
+}
+
+int show_available_topics(int tcp_sockfd)
+{
+    int topics_no, tot_len;
+    char header[sizeof(topics_no) + sizeof(tot_len)];
+
+    if (send_command(tcp_sockfd, REQ_TOPICS, 0, 0) == -1) {
+        fprintf(stderr, ERR_CONN);
+        return -1;
+    }
+
+    if (recv_all(tcp_sockfd, header, sizeof(topics_no) + sizeof(tot_len)) <
+        sizeof(topics_no) + sizeof(tot_len)) {
+        fprintf(stderr, ERR_CONN);
+        return -1;
+    }
+
+    memcpy(&topics_no, header, sizeof(topics_no));
+    memcpy(&tot_len, header + sizeof(topics_no), sizeof(tot_len));
+
+    if (!topics_no) {
+        printf("No topics available to subscribe to yet.\n");
+        return 0;
+    }
+
+    char buf[BUFSIZ];
+    if (recv_all(tcp_sockfd, buf, tot_len) < tot_len) {
+        fprintf(stderr, ERR_CONN);
+        return -1;
+    }
+
+    int offset = 0;
+    printf("Available topics on server:\n");
+    for (int i = 0; i < topics_no; i++) {
+        char tmp[51];
+        strcpy (tmp, buf + offset);
+        if (get_topic_id(tmp) == -1) {
+            printf("\t[-] %s\n", buf + offset);
+        } else {
+            printf("\t[+] %s\n", buf + offset);
+        }
+
+        offset += strlen(buf + offset) + 1;
+    }
+    printf("\n");
+
+    return 0;
+}
+
+void show_history()
+{
+    ll_node_t *head = history->head;
+
+    int idx = 1;
+
+    if (!head) {
+        printf("No local history.\n");
+        return;
+    }
+
+    printf("Local history:\n");
+    while (head) {
+        char *msg = *((char **)head->data);
+
+        printf("\t[%d] %s\n", idx, msg);
+        idx += 1;
+        head = head->next;
+    }
+    printf("\n");
+}
+
+void save_history()
+{
+    FILE *save_file = fopen("history_save.txt","a+");
+
+    if (!save_file) {
+        fprintf(stderr, "Couldn't open a history save file.\n");
+        return;
+    }
+
+    ll_node_t *head = history->head;
+
+    if (!head) {
+        printf("No history available. Not saving...\n");
+        return;
+    }
+
+    int idx = 1;
+
+    while (head) {
+        char *msg = *((char **)head->data);
+
+        fprintf(save_file, "\t[%d] %s\n", idx, msg);
+        idx += 1;
+        head = head->next;
+    }
+
+    fclose(save_file);
+}
+
+void show_client_topics()
+{
+    ll_node_t *head = subbed_topics->head;
+
+    if (!head) {
+        printf("No subscribed topics yet.\n");
+        return;
+    }
+
+    printf("Currently subscribed topics:\n");
+    while (head) {
+        struct topic *topic = (struct topic*)head->data;
+
+        printf("\t%s\n", topic->topic_name);
+
+        head = head->next;
+    }
+
+    printf("\n");
 }
 
 void handle_incoming_msgs(char *buf, int msgs_no, int tot_len)
@@ -429,26 +601,40 @@ void handle_incoming_msgs(char *buf, int msgs_no, int tot_len)
         }
 
         uint16_t ntoh_port = ntohs(server_msg.port);
+        char *h_msg = malloc(2000);
+
         switch (server_msg.data_type) {
             case INT: {
+                sprintf(h_msg, INT_MSG, ip_addr, ntoh_port,
+                                        get_topic_name(server_msg.topic_id),
+                                        *((int *)content));
                 printf(INT_MSG, ip_addr, ntoh_port,
                                 get_topic_name(server_msg.topic_id),
                                 *((int *)content));
             }
             break;
             case SHORT_REAL: {
+                sprintf(h_msg, SR_MSG, ip_addr, ntoh_port,
+                                       get_topic_name(server_msg.topic_id),
+                                       *((float *)content));
                 printf(SR_MSG, ip_addr, ntoh_port,
                                get_topic_name(server_msg.topic_id),
                                *((float *)content));
             }
             break;
             case FLOAT: {
+                sprintf(h_msg, FLT_MSG, ip_addr, ntoh_port,
+                                        get_topic_name(server_msg.topic_id),
+                                        *((double *)content));
                 printf(FLT_MSG, ip_addr, ntoh_port,
                                 get_topic_name(server_msg.topic_id),
                                 *((double *)content));
             }
             break;
             case STRING: {
+                sprintf(h_msg, STR_MSG, ip_addr, ntoh_port,
+                                        get_topic_name(server_msg.topic_id),
+                                        content);
                 printf(STR_MSG, ip_addr, ntoh_port,
                                 get_topic_name(server_msg.topic_id),
                                 content);
@@ -459,6 +645,10 @@ void handle_incoming_msgs(char *buf, int msgs_no, int tot_len)
             }
             break;
         }
+        if (ll_get_size(history) == MAX_HISTORY) {
+            ll_remove_nth_node(history, 0);
+        }
+        ll_add_nth_node(history, MAX_HISTORY + 1, &h_msg);
 
         offset += sizeof(server_msg) + server_msg.buf_len;
     }

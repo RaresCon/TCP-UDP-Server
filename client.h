@@ -7,7 +7,8 @@
 
 #define USAGE "Usage: %s <ID> <SERVER_IP> <PORT>\n"
 
-#define ERR_COMM "Invalid command. Please try again.\n"
+#define MAX_HISTORY 10
+
 #define ERR_ASUB "Already subscribed to this topic.\n"
 #define ERR_NSUB "Requested topic isn't subscribed to. Please try again.\n"
 #define ERR_NOTP "Requested topic doesn't exist. Please try again.\n"
@@ -137,6 +138,44 @@ uint32_t subscribe_topic(char *topic_name, int sf, int tcp_sockfd);
  * in the subscribed topics list for the client
  */
 uint32_t unsubscribe_topic(uint32_t topic_id, int tcp_sockfd);
+
+
+/*
+ * @brief Function to make a request to the server to unsubscribe
+ * from a topic. Firstly, the client checks if the requested topic
+ * is subscribed to, without making a request. Then the client
+ * waits for the response from the server.
+ * 
+ * @attention The response can be an OK, which will also contain the return value
+ * 0 (success) in the `option` field of the of the response (command_hdr).
+ * Note: this field may contain other information in the future for this response.
+ * 
+ * @param topic_name the name of the topic to unsubscribe from
+ * @param tcp_sockfd the TCP socket connected to the server
+ * 
+ * @return the id of the subscribed topic, -1 if the requested topic
+ * is not registered on the server, -2 if the requested topic is already
+ * in the subscribed topics list for the client
+ */
+int show_available_topics(int tcp_sockfd);
+
+
+/*
+ * @brief Function to show local history
+ */
+void show_history();
+
+
+/*
+ * @brief Function to save local history
+ */
+void save_history();
+
+
+/*
+ * @brief Function to show subscribed topics
+ */
+void show_client_topics();
 
 
 /*

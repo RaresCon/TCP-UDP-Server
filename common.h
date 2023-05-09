@@ -17,13 +17,19 @@
 
 #define STD_RETRIES 10
 
+#define ERR_COMM "Invalid command. Please try again.\n"
+
 typedef enum comm_type {
     ERR = -1,               /* Error code */
     OK,                     /* OK code */
     EXIT,                   /* Exit command code */
-    CHECK_ID,               /* Check connected id code */
-    SUBSCRIBE,              /* Subscribe command code */
-    UNSUBSCRIBE,            /* Unsubscribe command code */
+    REQ_CHECK_ID,           /* Check connected id code */
+    REQ_SUB,                /* Subscribe command code */
+    REQ_UNSUB,              /* Unsubscribe command code */
+    REQ_TOPICS,             /* Send topics request code */
+    REQ_HISTORY,            /* History code */
+    REQ_SUBBED,             /* Local subscribed topics code */
+    REQ_SAVE,               /* Save local history code */
 } comm_type;
 
 typedef enum data_type {

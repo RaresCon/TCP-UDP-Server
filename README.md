@@ -36,6 +36,14 @@ After the connection is established, the client can use **three commands**, as f
 
 - `unsubscribe <TOPIC_NAME>`, where the topic name must be a topic to which the client is subscribed locally, without sending a request to the server, otherwise it will return an error
 
+- `show`, which admits three arguments:
+    - `server_topics`, which prints all available topics to subscribe registered on the server, indicating with `+` the ones already subscribed to
+    - `my_topics`, which prints all subscribed topics
+    - `history`, which prints local history of messages, it stores a maximum of **10** old messages by default, this value can be modified in the `common.h` file
+
+- `save`, which admits for now only one argument:
+    - `history`, which saves locally by appending in `history_save.txt` file the current message history
+
 - `exit`, this command closes every handler and socket, then frees used memory and triggers the exit for the client
 
 The **subscribe command** will firstly send a `SUBSCRIBE` request to the server, containing the topic's name length, followed by the topic's name itself. Then it will either receive an **error response** from the server, meaning that the requested topic is not registered yet on the server, or an **OK response, containing the id of the topic on the server**, so the client can store the topic with the given id. The id of the topic is hashed using *CRC32* so in the future, the server may delete topics without worrying the id is relying on the size of the registered topics list.
@@ -74,7 +82,7 @@ These structures can be found inside the `common.h` file.
 
 ## **Things to improve** ##
 
-I could implement other commands for the client and the server to have more control over the data and information. These would come in a later update, so stay tuned.
+I could implement other commands for the client and the server to have more control over the data and information and I would have also liked to use a config file for some of the static values like the maximum number of connections. These would come in a later update, so stay tuned.
 
 ---
 ## **Copy-Right 2023** ##

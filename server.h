@@ -65,6 +65,14 @@ struct client *get_client(char *id);
 
 
 /*
+ * @brief Function to disconnect a client
+ * 
+ * @param curr_client the client to be
+ */
+void disconn_client(struct client *curr_client);
+
+
+/*
  * @brief Function to get the size of a messages queue,
  * including the size of the data stored in it
  * 
@@ -112,6 +120,16 @@ void handle_msg(struct message_t new_msg);
  * @param curr_client the client to which the messages will be sent
  */
 void handle_sf_queue(struct client *curr_client);
+
+
+/*
+ * @brief Function to get send a client local stored topics
+ * 
+ * @param curr_client the client to which the topics will be sent
+ * 
+ * @return 0 if successful, -1 otherwise
+ */
+int send_local_topics(struct client *curr_client);
 
 
 /*
@@ -175,11 +193,11 @@ uint8_t get_topic_sf(linked_list_t *client_topics, uint32_t topic_id);
  * @brief Function to get the exact the size of a topics list,
  * including its data size
  * 
- * @param topics the list of topics
+ * @param client_topics the list of topics of a client
  * 
  * @return the size of the given topics list
  */
-int get_topics_size(linked_list_t *topics);
+int get_topics_size(linked_list_t *client_topics);
 
 
 /*
@@ -188,8 +206,10 @@ int get_topics_size(linked_list_t *topics);
  * @param curr_client the client that requested the subscribe
  * @param sf Store-and-Forward flag
  * @param topic_name the name of the topic to be subscribed to
+ * 
+ * @return 0 if successful, -1 otherwise
  */
-void sub_client(struct client *curr_client, uint8_t sf, char *topic_name);
+int sub_client(struct client *curr_client, uint8_t sf, char *topic_name);
 
 
 /*
@@ -197,8 +217,10 @@ void sub_client(struct client *curr_client, uint8_t sf, char *topic_name);
  * 
  * @param curr_client the client that requested the unsubscribe
  * @param topic_id the topic's id to be unsubscribed from
+ * 
+ * @return 0 if successful, -1 otherwise
  */
-void unsub_client(struct client *curr_client, uint32_t topic_id);
+int unsub_client(struct client *curr_client, uint32_t topic_id);
 
 
 /*

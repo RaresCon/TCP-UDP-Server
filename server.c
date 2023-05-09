@@ -164,7 +164,7 @@ int main(int argc, char *argv[])
 
 					close(new_client_fd);
 					continue;
-				} else if (check_client.opcode != CHECK_ID) {
+				} else if (check_client.opcode != REQ_CHECK_ID) {
 					fprintf(stderr, "Invalid opcode.\n");
 
 					if (send_command(new_client_fd, ERR, 0, 0) == -1) {
@@ -206,9 +206,7 @@ int main(int argc, char *argv[])
 					ev.events = EPOLLIN;
 					ev.data.ptr = old_client;
 					if (add_event(epoll_fd, old_client->fd, &ev) == -1) {
-						close(old_client->fd);
-						old_client->conned = 0;
-						old_client->fd = -1;
+						disconn_client(old_client);
 						continue;
 					}
 				} else {
@@ -316,7 +314,7 @@ int main(int argc, char *argv[])
 					}
 					break;
 					default:
-
+						fprintf(stderr, ERR_COMM);
 					break;
 				}
 				free(tokens);
@@ -329,28 +327,47 @@ int main(int argc, char *argv[])
 							  sizeof(command_from_client));
 
 				if (!rc) {
-					printf(DCONN_STR, curr_client->id);
-					curr_client->conned = 0;
+					printf(DCONN_STR, curr_client->id);					
 					rm_event(epoll_fd, curr_client->fd);
-					close(curr_client->fd);
-					curr_client->fd = -1;
+					disconn_client(curr_client);
+
 					continue;
 				}
 
 				switch (command_from_client.opcode) {
-				case SUBSCRIBE: {
+				case REQ_SUB: {
 					char *buf = malloc(command_from_client.buf_len);
 					if (recv_all(curr_client->fd, buf, command_from_client.buf_len) <
 						command_from_client.buf_len) {
 						fprintf(stderr, ERR_CONN);
+						rm_event(epoll_fd, curr_client->fd);
+						disconn_client(curr_client);
+
 						continue;
 					}
-					sub_client(curr_client, command_from_client.option, buf);
+					rc = sub_client(curr_client, command_from_client.option, buf);
+					if (rc == -1) {
+						rm_event(epoll_fd, curr_client->fd);
+						disconn_client(curr_client);
+					}
+
 					free(buf);
 				}
 				break;
-				case UNSUBSCRIBE: {
-					unsub_client(curr_client, command_from_client.option);
+				case REQ_UNSUB: {
+					rc = unsub_client(curr_client, command_from_client.option);
+					if (rc == -1) {
+						rm_event(epoll_fd, curr_client->fd);
+						disconn_client(curr_client);
+					}
+				}
+				break;
+				case REQ_TOPICS: {
+					rc = send_local_topics(curr_client);
+					if (rc == -1) {
+						rm_event(epoll_fd, curr_client->fd);
+						disconn_client(curr_client);
+					}
 				}
 				break;
 				default:
@@ -385,6 +402,13 @@ admin_comm_type parse_command(int nr, char **tokens)
     }
 
     return ERR_ADMIN;
+}
+
+void disconn_client(struct client *curr_client)
+{
+	close(curr_client->fd);
+	curr_client->conned = 0;
+	curr_client->fd = -1;
 }
 
 int add_new_topic(char *topic_name)
@@ -557,10 +581,10 @@ int get_msgs_size(linked_list_t *msg_queue)
 	return size;
 }
 
-int get_topics_size(linked_list_t *topics)
+int get_topics_size(linked_list_t *client_topics)
 {
-	int size = ll_get_size(topics) * (2 * sizeof(uint32_t));
-	ll_node_t *head = topics->head;
+	int size = ll_get_size(client_topics) * (2 * sizeof(uint32_t));
+	ll_node_t *head = client_topics->head;
 
 	while (head) {
 		struct subbed_topic *curr_topic = (struct subbed_topic *)head->data;
@@ -570,6 +594,48 @@ int get_topics_size(linked_list_t *topics)
 	}
 
 	return size;
+}
+
+int send_local_topics(struct client *curr_client)
+{
+	ll_node_t *head = topics->head;
+	int tot_len = 0, topics_no = ll_get_size(topics);
+	
+	char header[sizeof(tot_len) + sizeof(topics_no)];
+
+	while (head) {
+		struct topic *curr_topic = (struct topic *)head->data;
+		tot_len += strlen(curr_topic->topic_name) + 1;
+
+		head = head->next;
+	}
+
+	memcpy(header, &topics_no, sizeof(topics_no));
+	memcpy(header + sizeof(topics_no), &tot_len, sizeof(tot_len));
+
+	if (send_all(curr_client->fd, header, sizeof(tot_len) + sizeof(topics_no)) <
+		sizeof(tot_len) + sizeof(topics_no)) {
+		return -1;
+	}
+
+	int offset = 0;
+	char buf[BUFSIZ];
+	head = topics->head;
+
+	for (int i = 0; i < topics_no; i++) {
+		struct topic *curr_topic = (struct topic *)head->data;
+
+		memcpy(buf + offset, curr_topic->topic_name, strlen(curr_topic->topic_name) + 1);
+		offset += strlen(curr_topic->topic_name) + 1;
+
+		head = head->next;
+	}
+
+	if (send_all(curr_client->fd, buf, tot_len) < tot_len) {
+		return -1;
+	}
+
+	return 0;
 }
 
 void send_subbed_topics(struct client *curr_client)
@@ -696,17 +762,15 @@ void handle_sf_queue(struct client *curr_client)
 	ll_free_elems(&curr_client->msg_queue);
 }
 
-void sub_client(struct client *curr_client, uint8_t sf, char *topic_name)
+int sub_client(struct client *curr_client, uint8_t sf, char *topic_name)
 {
 	uint32_t id = get_topic_id(topic_name);
 
 	if (id == -1) {
 		if (send_command(curr_client->fd, ERR, 0, 0) == -1) {
-			fprintf(stderr, ERR_CONN);
-			close(curr_client->fd);
-			curr_client->conned = 0;
+			return -1;
 		}
-		return;
+		return -2;
 	}
 
 	struct subbed_topic client_topic;
@@ -716,33 +780,29 @@ void sub_client(struct client *curr_client, uint8_t sf, char *topic_name)
 	ll_add_nth_node(curr_client->client_topics, 0, &client_topic);
 
 	if (send_command(curr_client->fd, OK, id, 0) == -1) {
-		fprintf(stderr, ERR_CONN);
-		close(curr_client->fd);
-		curr_client->conned = 0;
+		return -1;
 	}
+
+	return 0;
 }
 
-void unsub_client(struct client *curr_client, uint32_t topic_id)
+int unsub_client(struct client *curr_client, uint32_t topic_id)
 {
 	int topic_idx = get_topic_idx(curr_client->client_topics, topic_id);
 
 	if (topic_idx == -1) {
 		if (send_command(curr_client->fd, ERR, 0, 0) == -1) {
-			fprintf(stderr, ERR_CONN);
-			close(curr_client->fd);
-			curr_client->conned = 0;
-			curr_client->fd = -1;
+			return -1;
 		}
-		return;
+		return -2;
 	}
 	ll_remove_nth_node(curr_client->client_topics, topic_idx);
 
 	if (send_command(curr_client->fd, OK, 0, 0) == -1) {
-		fprintf(stderr, ERR_CONN);
-		close(curr_client->fd);
-		curr_client->conned = 0;
-		curr_client->fd = -1;
-	} 
+		return -1;
+	}
+
+	return 0;
 }
 
 void show_topics() {
