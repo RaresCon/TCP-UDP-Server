@@ -142,6 +142,15 @@ int main(int argc, char *argv[])
 					}
 				}
 
+				if (setsockopt(tcp_sockfd, SOL_SOCKET,
+							   SO_REUSEADDR, &enable, sizeof(int)) < 0) {
+        			perror("SO_REUSEADDR error\n");
+    			}
+				if (setsockopt(new_client_fd, IPPROTO_TCP,
+							   TCP_NODELAY, &enable, sizeof(int)) < 0) {
+					perror("TCP_NODELAY error\n");
+				}
+
 				struct command_hdr check_client;
 				if (recv_all(new_client_fd, &check_client, sizeof(struct command_hdr)) <
 					sizeof(struct command_hdr)) {
@@ -236,8 +245,7 @@ int main(int argc, char *argv[])
 					continue;
 				}
 
-				printf("New client %s connected from %s:%d.\n", buf, ip_addr,
-																ntohs(new_client_addr.sin_port));
+				printf(CONN_STR, buf, ip_addr, ntohs(new_client_addr.sin_port));
 				free(buf);
 			} else if (events_list[i].data.fd == udp_sockfd) {
 				struct sockaddr_in udp_client;
@@ -276,23 +284,42 @@ int main(int argc, char *argv[])
 
 				handle_msg(*msg);
 			} else if (events_list[i].data.fd == STDIN_FILENO) {
+				int nr;
+				admin_comm_type res;
+				char **tokens = calloc(4, sizeof(char *));
 				char command[BUFSIZ];
 				fgets(command, BUFSIZ, stdin);
 
-				if (strlen(command) != 5 || strcmp(command, "exit\n")) {
-					printf("Invalid command. Please try again.\n");
-					continue;
+				nr = tokenize_command(command, tokens);
+				res = parse_command(nr, tokens);
+
+				switch (res) {
+					case SHOW_TOPICS: {
+						show_topics();
+					}
+					break;
+					case SHOW_CLIENTS: {
+						show_clients();
+					}
+					break;
+					case EXIT: {
+						ll_free(&registered_users);
+						ll_free(&topics);
+						free(events_list);
+						free(tokens);
+						shutdown(tcp_sockfd, SHUT_RDWR);
+						close(tcp_sockfd);
+						close(udp_sockfd);
+						close(epoll_fd);
+
+						return 0;
+					}
+					break;
+					default:
+
+					break;
 				}
-
-				ll_free(&registered_users);
-				ll_free(&topics);
-				free(events_list);
-				shutdown(tcp_sockfd, SHUT_RDWR);
-				close(tcp_sockfd);
-				close(udp_sockfd);
-				close(epoll_fd);
-
-				return 0;
+				free(tokens);
 			} else {
 				int rc;
 				struct client *curr_client = (struct client*)events_list[i].data.ptr;
@@ -302,7 +329,7 @@ int main(int argc, char *argv[])
 							  sizeof(command_from_client));
 
 				if (!rc) {
-					printf("Client %s disconnected.\n", curr_client->id);
+					printf(DCONN_STR, curr_client->id);
 					curr_client->conned = 0;
 					rm_event(epoll_fd, curr_client->fd);
 					close(curr_client->fd);
@@ -345,6 +372,21 @@ int main(int argc, char *argv[])
 	return 0;
 }
 
+admin_comm_type parse_command(int nr, char **tokens)
+{  
+	if (!strcmp(tokens[0], "exit") && nr == 1) {
+		return EXIT_ADMIN;
+	} else if (!strcmp(tokens[0], "show") && nr == 2) {
+        if (!strcmp(tokens[1], "topics")) {
+            return SHOW_TOPICS;
+        } else if (!strcmp(tokens[1], "clients")) {
+			return SHOW_CLIENTS;
+		}
+    }
+
+    return ERR_ADMIN;
+}
+
 int add_new_topic(char *topic_name)
 {
 	ll_node_t *head = topics->head;
@@ -358,14 +400,14 @@ int add_new_topic(char *topic_name)
 	}
 
 	struct topic new_topic;
-	new_topic.id = ll_get_size(topics) + 1;
+	new_topic.id = crc32_hash((unsigned char *)topic_name);
 	strcpy(new_topic.topic_name, topic_name);
-	ll_add_nth_node(topics, 0, &new_topic);
+	ll_add_nth_node(topics, ll_get_size(topics), &new_topic);
 
 	return new_topic.id;
 }
 
-uint8_t get_topic_id(char *topic_name)
+uint32_t get_topic_id(char *topic_name)
 {
 	ll_node_t *head = topics->head;
 	
@@ -380,7 +422,7 @@ uint8_t get_topic_id(char *topic_name)
 	return -1;
 }
 
-int get_topic_idx(linked_list_t *client_topics, uint8_t topic_id)
+int get_topic_idx(linked_list_t *client_topics, uint32_t topic_id)
 {
 	ll_node_t *head = client_topics->head;
 	int idx = 0;
@@ -397,7 +439,7 @@ int get_topic_idx(linked_list_t *client_topics, uint8_t topic_id)
 	return -1;
 }
 
-uint8_t get_topic_sf(linked_list_t *client_topics, uint8_t topic_id)
+uint8_t get_topic_sf(linked_list_t *client_topics, uint32_t topic_id)
 {
 	ll_node_t *head = client_topics->head;
 
@@ -492,7 +534,7 @@ struct message_t *parse_msg(int ip, int port, uint8_t data_type, int topic_id, c
 		}
 		break;
 		default:
-			fprintf(stderr, "Unrecognized data type from UDP client - dropping.\n");
+			fprintf(stderr, "Unrecognized data type from UDP client.\n");
 			return NULL;
 		break;
 	}
@@ -517,7 +559,7 @@ int get_msgs_size(linked_list_t *msg_queue)
 
 int get_topics_size(linked_list_t *topics)
 {
-	int size = ll_get_size(topics) * (2 * sizeof(uint8_t));
+	int size = ll_get_size(topics) * (2 * sizeof(uint32_t));
 	ll_node_t *head = topics->head;
 
 	while (head) {
@@ -534,7 +576,8 @@ void send_subbed_topics(struct client *curr_client)
 {
 	int topics_no, tot_len;
 	topics_no = ll_get_size(curr_client->client_topics);
-	tot_len = get_topics_size(curr_client->client_topics) + topics_no * sizeof(int);
+	tot_len = get_topics_size(curr_client->client_topics) +
+			  topics_no * sizeof(int);
 
 	char header[sizeof(topics_no) + sizeof(tot_len)];
 	memcpy(header, &topics_no, sizeof(topics_no));
@@ -604,7 +647,8 @@ void send_msgs(struct client *curr_client, linked_list_t *msgs)
 		struct message_t *curr_msg = (struct message_t*)head->data;
 
 		memcpy(buf + offset, &curr_msg->header, sizeof(struct message_hdr));
-		memcpy(buf + offset + sizeof(struct message_hdr), curr_msg->buf, curr_msg->header.buf_len);
+		memcpy(buf + offset + sizeof(struct message_hdr),
+			   curr_msg->buf, curr_msg->header.buf_len);
 		offset += sizeof(struct message_hdr) + curr_msg->header.buf_len;
 
 		head = head->next;
@@ -654,9 +698,9 @@ void handle_sf_queue(struct client *curr_client)
 
 void sub_client(struct client *curr_client, uint8_t sf, char *topic_name)
 {
-	uint8_t id = get_topic_id(topic_name);
+	uint32_t id = get_topic_id(topic_name);
 
-	if (id == (uint8_t) -1) {
+	if (id == -1) {
 		if (send_command(curr_client->fd, ERR, 0, 0) == -1) {
 			fprintf(stderr, ERR_CONN);
 			close(curr_client->fd);
@@ -678,7 +722,7 @@ void sub_client(struct client *curr_client, uint8_t sf, char *topic_name)
 	}
 }
 
-void unsub_client(struct client *curr_client, uint8_t topic_id)
+void unsub_client(struct client *curr_client, uint32_t topic_id)
 {
 	int topic_idx = get_topic_idx(curr_client->client_topics, topic_id);
 
@@ -699,4 +743,66 @@ void unsub_client(struct client *curr_client, uint8_t topic_id)
 		curr_client->conned = 0;
 		curr_client->fd = -1;
 	} 
+}
+
+void show_topics() {
+	ll_node_t *head = topics->head;
+
+	if (!head) {
+		printf("No topics registered yet.\n");
+	}
+
+	while (head) {
+		struct topic *curr_topic = (struct topic*)head->data;
+		printf("[%u] %s\n", curr_topic->id, curr_topic->topic_name);
+
+		head = head->next;
+	}
+}
+
+void show_clients() {
+	ll_node_t *head = registered_users->head;
+
+	if (!head) {
+		printf("No client registered yet.\n");
+	}
+
+	while (head) {
+		struct client *curr_client = *((struct client**)head->data);
+		ll_node_t *topics_head = curr_client->client_topics->head;
+
+		printf("%s topics:\n", curr_client->id);
+		if (!topics_head) {
+			printf("\tNo subscribed topics.\n");
+		}
+
+		while (topics_head) {
+			struct subbed_topic *curr_topic = (struct subbed_topic*)topics_head->data;
+
+			printf("\t%s - SF = %d\n", curr_topic->info.topic_name, curr_topic->sf);
+
+			topics_head = topics_head->next;
+		}
+
+		printf("\n");
+		head = head->next;
+	}
+}
+
+uint32_t crc32_hash(unsigned char *message) {
+   int i, j;
+   uint32_t byte, crc, mask;
+
+   i = 0;
+   crc = 0xFFFFFFFF;
+   while (message[i] != 0) {
+      byte = message[i];
+      crc = crc ^ byte;
+      for (j = 7; j >= 0; j--) {
+         mask = -(crc & 1);
+         crc = (crc >> 1) ^ (0xEDB88320 & mask);
+      }
+      i = i + 1;
+   }
+   return ~crc;
 }

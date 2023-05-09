@@ -3,7 +3,7 @@
 ---
 ## **Description** ##
 
-This is a *TCP-UDP Server and TCP Client* implementation that use **TCP sockets** for communication. The main functionality of the programs is subscribing and receiving messages regarding different topics coming from *UDP clients*. The server can sustain a maximum number of connections equal to **50** as default and it can manage messages for a *subscriber* while it is disconnected if needed.
+This is a *TCP-UDP Server and TCP Client* implementation that use **TCP sockets** for communication. The main functionality of the programs is subscribing and receiving messages regarding different topics coming from *UDP clients*. The server can sustain a maximum number of connections equal to **50** as default and it can manage messages for a *subscriber* while it is disconnected if needed. 
 
 ---
 
@@ -38,15 +38,21 @@ After the connection is established, the client can use **three commands**, as f
 
 - `exit`, this command closes every handler and socket, then frees used memory and triggers the exit for the client
 
-The **subscribe command** will firstly send a `SUBSCRIBE` request to the server, containing the topic's name length, followed by the topic's name itself. Then it will either receive an **error response** from the server, meaning that the requested topic is not registered yet on the server, or an **OK response, containing the id of the topic on the server**, so the client can store the topic with the given id.
+The **subscribe command** will firstly send a `SUBSCRIBE` request to the server, containing the topic's name length, followed by the topic's name itself. Then it will either receive an **error response** from the server, meaning that the requested topic is not registered yet on the server, or an **OK response, containing the id of the topic on the server**, so the client can store the topic with the given id. The id of the topic is hashed using *CRC32* so in the future, the server may delete topics without worrying the id is relying on the size of the registered topics list.
 
 The **unsubscribe command** will firstly check if the given topic is in the local list of topics, then it will send to the server an `UNSUBSCRIBE` request, containing just the id of the topic and wait for a response from the server, which can be an **error or OK**. The topic will be removed from the local list.
 
 To set the **Store-and-Forward flag** to 0 or 1, the client must unsubscribe from the topic and resubscribe.
 
-The server has only one command, `exit`, which closes all the handlers and **shuts down the TCP listening socket**, frees the used memory and exits.
+The server has three commands currently, used by an admin, as follows:
+- `show`, which admits two arguments:
+    - `topics`, which prints all topics registered currently on the server, including their ids (hashes)
+    - `clients`, which prints all clients registered currently on the server, including their subscribed topics and their Store-and-Forward flag
+- `exit`, which closes all the handlers and **shuts down the TCP listening socket**, frees the used memory and exits
 
 The server receives messages from **UDP clients** and handles them for the clients, sending a message instantly if a client is connected to the server, or stores it to be sent at reconnection if the client is subscribed to its topic with **Store-and-Forward active**. The message is sent to the client in a compact and efficient way, presented below.
+
+To be as reliable as possible, both the server and the client catch all possible system errors, **treating them in different ways**. For example, if a socket is not created on first try, then **the server/client retries to create that socket ten more times (by default, see `common.h`)**, this is done for all major parts of the applications, so we know that **the server/client has tried its best to open the communication**. Another example, when the server/client sends or receives something, **it checks requested size is actually sent/received** and if not, **it doesn't complete a request or a response**, so the server/client **do not run into major problems**, like keeping a socket open even if on the other side of it something has gone wrong.
 
 ---
 
@@ -54,13 +60,13 @@ The server receives messages from **UDP clients** and handles them for the clien
 
 There are two protocols used during the communication of the server and client, one being used to control both of them while running and one being the way the server sends the messages to the client after receiving them from an UDP client. These protocols help with the efficiency of the communication itself, making data more compact and only sending the needed information.
 
-It's important to note before explaining the protocols that **the topics are stored as ids on the server and in the client**, so the server and the client **don't need the name of the topic** which can be 50 bytes long to understand the messages, but only a byte (an `uint8_t` which can then be extended to 2 bytes if the number of topics need it). As an improvement to this, I would have liked to use a hashing function so the server can delete or add manually topics and it wouldn't rely on a simple number given by the size of the list.
+It's important to note before explaining the protocols that **the topics are stored as ids on the server and in the client**, so the server and the client **don't need the name of the topic** which can be 50 bytes long to understand the messages, but only 4 bytes. As an improvement, the name of the topic is hashed, so the id doesn't rely on any extern factor, like the size of the local list of topics, and the possibility of collision is minimal. This allows for new admin commands, like *delete topic*.
 
 **First protocol** is based on the `command_hdr` structure which allows the client to send requests to the server and the server to send responses back to the client. It has an `opcode` field that represents the **operation of the request or the response type**, an `option` field that can hold an **optional flag for the operation or response** and a `buf_len` field that represents the **length of an optional buffer coming after this header** (inspired by HTTP protocol).
 
 **Second protocol** is based on a simplier way of storing and sending a message to a client by using the `message_hdr` structure, that lets **the server and client represent an UDP client and its message without using a literal string**, but smaller data types. The `ip_addr` and `port` fields are used to **print the IP adress and port of the UDP client** sending the message, the `topic_id` and `data_type` fields **help the client understand what is the topic and data type contained in the message**, and at last, the `buf_len` field representing the size of the message coming after this header in a larger buffer. It becomes easy to separate information this way and **even if the TCP protocol concatenates data**, it will still function as inteneded without any errors.
 
-When a longer buffer containing more than one message is sent, the server puts all messages one after the other in a larger buffer, then sends a smaller header containing the number of messages and the total length of this larger buffer to the client, so the client receives on the socket exactly this length. After having this buffer, thee client deconstructs the messages and prints them for the user.
+When a longer buffer containing more than one message is sent, the server puts all messages one after the other in a larger buffer, then sends a smaller header containing the number of messages and the total length of this larger buffer to the client, so the client receives on the socket exactly this length. After having this buffer, the client deconstructs the messages and prints them for the user.
 
 These structures can be found inside the `common.h` file.
 
@@ -68,7 +74,7 @@ These structures can be found inside the `common.h` file.
 
 ## **Things to improve** ##
 
-I could do some things in a better way, such as the storing of topics by a hash of the name instead of an id, other commands for the client and the server to have more control over the data and information. These would come in a later update, so stay tuned.
+I could implement other commands for the client and the server to have more control over the data and information. These would come in a later update, so stay tuned.
 
 ---
 ## **Copy-Right 2023** ##

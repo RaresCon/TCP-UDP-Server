@@ -1,44 +1,21 @@
 #include "common.h"
 
-comm_type parse_command(char *comm, char **tokens)
+int tokenize_command(char *comm, char **tokens)
 {
-    int nr;
 	char *token, *nl = strchr(comm, '\n');
 	token = strtok(comm, " ");
-	short i = 0;
+	int i = 0;
 
 	if (nl) {
 		*nl = '\0';
     }
 
-	while (token && i != 3) {
+	while (token) {
 		tokens[i++] = token;
 		token = strtok(NULL, " ");
 	}
-	nr = i;
 
-	if (strtok(NULL, " ")) {
-		return ERR;
-	}
-
-    if (!strcmp(tokens[0], "exit")) {
-        if (nr == 1) {
-            return EXIT;
-        }
-        return ERR;
-    } else if (!strcmp(tokens[0], "unsubscribe")) {
-        if (nr == 2) {
-            return UNSUBSCRIBE;
-        }
-        return ERR;
-    } else if (!strcmp(tokens[0], "subscribe")) {
-        if (nr == 3) {
-            return SUBSCRIBE;
-        }
-        return ERR;
-    }
-
-    return ERR;
+    return i;
 }
 
 int check_valid_uns_number(char *num)
@@ -69,7 +46,7 @@ int send_all(int sockfd, void *buf, int len)
 	while (len) {
 		int tmp = send(sockfd, buffer + sent_len, len, 0);
 
-		if (tmp == 0) {
+		if (tmp == 0 || tmp == -1) {
 			break;
 		}
 
@@ -88,7 +65,7 @@ int recv_all(int sockfd, void *buf, int len)
 	while (len) {
 		int tmp = recv(sockfd, buffer + recv_len, len, 0);
 
-		if (tmp == 0) {
+		if (tmp == 0 || tmp == -1) {
 			break;
 		}
 
@@ -99,7 +76,7 @@ int recv_all(int sockfd, void *buf, int len)
     return recv_len;
 }
 
-int send_command(int sockfd, comm_type type, uint8_t option, uint16_t buf_len)
+int send_command(int sockfd, comm_type type, uint32_t option, uint16_t buf_len)
 {
     struct command_hdr command;
     command.opcode = type;

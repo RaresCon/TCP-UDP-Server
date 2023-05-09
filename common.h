@@ -36,7 +36,7 @@ typedef enum data_type {
 /* Request/Response header */
 struct command_hdr {
     uint8_t opcode;         /* Operation code */
-    uint8_t option;         /* Optional data field */
+    uint32_t option;        /* Optional data field */
     uint16_t buf_len;       /* Optional lenght field for buffer after header */
 } __attribute__((__packed__));
 
@@ -44,15 +44,27 @@ struct command_hdr {
 struct message_hdr {
     uint32_t ip_addr;       /* IP address of the UDP client */
     uint16_t port;          /* Port of the UDP client */
-    uint8_t topic_id;       /* Message's id topic */
+    uint32_t topic_id;       /* Message's id topic */
     uint8_t data_type;      /* Data type of the message */
     uint16_t buf_len;       /* Message length after header */
 } __attribute__((__packed__));
 
 struct topic {
-    uint8_t id;             /* Id of topic */
+    uint32_t id;             /* Id of topic */
     char topic_name[51];    /* Name of topic */
 } __attribute__((__packed__));
+
+
+/*
+ * @brief Utility function to tokenize a user command
+ * 
+ * @param comm the command
+ * @param tokens array of strings in which the function
+ * will save the tokens
+ * 
+ * @return the number of the tokens
+ */
+int tokenize_command(char *comm, char **tokens);
 
 
 /*
@@ -64,18 +76,6 @@ struct topic {
  * @return the number if it is valid, -1 otherwise
  */
 int check_valid_uns_number(char *num);
-
-
-/*
- * @brief Function to parse a command given at STDIN
- * 
- * @param comm the given command
- * @param tokens the array in which the function will save
- * the tokens of the command
- * 
- * @return the command type if the command is valid, ERR otherwise
- */
-comm_type parse_command(char *comm, char **tokens);
 
 
 /*
@@ -116,7 +116,7 @@ int recv_all(int sockfd, void *buf, int len);
  * 
  * @return 0 if the request/response was sent successfully, -1 otherwise
  */
-int send_command(int sockfd, comm_type type, uint8_t option, uint16_t buf_len);
+int send_command(int sockfd, comm_type type, uint32_t option, uint16_t buf_len);
 
 
 /*

@@ -4,9 +4,6 @@ CLIENT_SOURCE=client.c
 SERVER_BIN=server
 CLIENT_BIN=subscriber
 
-MAIN_SOURCES=$(SERVER_SOURCE) $(CLIENT_SOURCE)
-MAIN_OBJECTS=$(MAIN_SOURCES:.c=.o)
-
 UTILS_SOURCES=common.c list.c
 UTILS_OBJECTS=$(UTILS_SOURCES:.c=.o)
 
@@ -21,22 +18,22 @@ build: clean server subscriber clean.o
 .c.o: 
 	$(CC) $(CFLAGS) $< -o $@
 
-server: $(MAIN_SOURCES) $(UTILS_SOURCES) $(MAIN_OBJECTS) $(UTILS_OBJECTS)
+server: $(SERVER_SOURCE) $(UTILS_SOURCES) $(SERVER_SOURCE:.c=.o) $(UTILS_OBJECTS)
 	$(CC) $(SERVER_SOURCE:.c=.o) $(UTILS_OBJECTS) -o $@
 
-subscriber: $(MAIN_SOURCES) $(UTILS_SOURCES) $(MAIN_OBJECTS) $(UTILS_OBJECTS)
+subscriber: $(CLIENT_SOURCE) $(UTILS_SOURCES) $(CLIENT_SOURCE:.c=.o) $(UTILS_OBJECTS)
 	$(CC) $(CLIENT_SOURCE:.c=.o) $(UTILS_OBJECTS) -o $@
 
 clean:
-	rm -rf *.o $(SERVER_SOURCE:.c=) subscriber
+	rm -rf *.o $(SERVER_BIN) $(CLIENT_BIN)
 
 clean.o:
 	rm -rf *.o
 
-run_server: build
+run_server: server clean.o
 	./$(SERVER_BIN) $(DEFAULT_PORT)
 
-run_client: build
+run_client: subscriber clean.o
 	@read -p "Client ID: " id; \
 	./$(CLIENT_BIN) $$id $(LOCAL_HOST) $(DEFAULT_PORT)
 

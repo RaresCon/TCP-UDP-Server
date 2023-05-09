@@ -5,8 +5,8 @@
 #include <string.h>
 
 typedef struct ll_node_t {
-    void* data;             /* the actual data */
-    struct ll_node_t* next; /* the next node */
+    void* data;                 /* the actual data */
+    struct ll_node_t* next;     /* the next node */
 } ll_node_t;
 
 typedef struct linked_list_t {

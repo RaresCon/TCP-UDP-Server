@@ -21,13 +21,24 @@
 
 
 /*
+ * @brief Function to parse an user command 
+ * 
+ * @param nr the number of tokens
+ * @param tokens the array of tokens 
+ * 
+ * @return the command type if the command is valid, ERR otherwise
+ */
+comm_type parse_command(int nr, char **tokens);
+
+
+/*
  * @brief Function to add a new subscribed topic to the global
  * array of subscribed topics
  * 
  * @param id the id of the new subscribed topic
  * @param topic_name the name of the topic
  */
-void add_subbed_topic(uint8_t id, char *topic_name);
+void add_subbed_topic(uint32_t id, char *topic_name);
 
 
 /*
@@ -49,7 +60,7 @@ int get_topic_id(char *topic_name);
  * @return the name of the topic if the client is
  * subscribed to it, NULL otherwise
  */
-char *get_topic_name(uint8_t topic_id);
+char *get_topic_name(uint32_t topic_id);
 
 
 /*
@@ -61,7 +72,7 @@ char *get_topic_name(uint8_t topic_id);
  * @return the index of the requested topic if the client
  * is subscribed to it, -1 otherwise
  */
-int get_topic_idx(uint8_t topic_id);
+int get_topic_idx(uint32_t topic_id);
 
 
 /*
@@ -105,7 +116,7 @@ int verify_id(char *id, int tcp_sockfd);
  * is not registered on the server, -2 if the requested topic is already
  * in the subscribed topics list for the client
  */
-uint8_t subscribe_topic(char *topic_name, int sf, int tcp_sockfd);
+uint32_t subscribe_topic(char *topic_name, int sf, int tcp_sockfd);
 
 
 /*
@@ -125,7 +136,7 @@ uint8_t subscribe_topic(char *topic_name, int sf, int tcp_sockfd);
  * is not registered on the server, -2 if the requested topic is already
  * in the subscribed topics list for the client
  */
-uint8_t unsubscribe_topic(uint8_t topic_id, int tcp_sockfd);
+uint32_t unsubscribe_topic(uint32_t topic_id, int tcp_sockfd);
 
 
 /*

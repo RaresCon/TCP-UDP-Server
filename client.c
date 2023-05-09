@@ -111,6 +111,8 @@ int main(int argc, char *argv[])
 				rc = recv_all(tcp_sockfd, header, sizeof(msgs_no) + sizeof(tot_len));
 
 				if (!rc) {
+                    fprintf(stderr, ERR_CONN);
+
                     ll_free(&subbed_topics);
 					close(tcp_sockfd);
                     close(epoll_fd);
@@ -133,30 +135,24 @@ int main(int argc, char *argv[])
 
                 handle_incoming_msgs(buf, msgs_no, tot_len);
 			} else if (events_list[i].data.fd == STDIN_FILENO) {
+                int nr;
                 comm_type req;
                 char **tokens = calloc(4, sizeof(char *));
                 char command[BUFSIZ];
 				fgets(command, BUFSIZ, stdin);
 
-                if ((req = parse_command(command, tokens)) == -1) {
+                nr = tokenize_command(command, tokens);
+
+                if ((req = parse_command(nr, tokens)) == -1) {
                     fprintf(stderr, ERR_COMM);
                     continue;
                 }
 
                 switch (req) {
-                    case EXIT: {
-                        close(tcp_sockfd);
-                        close(epoll_fd);
-                        free(events_list);
-                        free(tokens);
-
-                        return 0;
-                    }
-                    break;
                     case UNSUBSCRIBE: {
                         int topic_id = get_topic_id(tokens[1]);
 
-                        if (topic_id == -1) {
+                        if (topic_id == 0) {
                             fprintf(stderr, ERR_NSUB);
                             continue;
                         }
@@ -170,22 +166,27 @@ int main(int argc, char *argv[])
                     case SUBSCRIBE: {
                         int sf = check_valid_uns_number(tokens[2]);
 
+                        if (strlen(tokens[1]) > 50) {
+                            fprintf(stderr, ERR_COMM);
+                            continue;
+                        }
+
                         if (sf == -1 || (sf != 0 && sf != 1)) {
                             fprintf(stderr, ERR_COMM);
                             continue;
                         }
 
-                        uint8_t topic_id = subscribe_topic(tokens[1],
-                                                           atoi(tokens[2]),
-                                                           tcp_sockfd);
+                        uint32_t topic_id = subscribe_topic(tokens[1],
+                                                            atoi(tokens[2]),
+                                                            tcp_sockfd);
                         
-                        if (topic_id == (uint8_t) -1) {
+                        if (topic_id == -1) {
                             fprintf(stderr, ERR_NOTP);
                             continue;
-                        } else if (topic_id == (uint8_t) -2) {
+                        } else if (topic_id == -2) {
                             fprintf(stderr, ERR_ASUB);
                             continue;
-                        } else if (topic_id == (uint8_t) -3) {
+                        } else if (topic_id == -3) {
                             fprintf(stderr, ERR_CONN);
 
                             close(tcp_sockfd);
@@ -198,6 +199,15 @@ int main(int argc, char *argv[])
 
                         add_subbed_topic(topic_id, tokens[1]);
                         printf("Subscribed to topic.\n");
+                    }
+                    break;
+                    case EXIT: {
+                        close(tcp_sockfd);
+                        close(epoll_fd);
+                        free(events_list);
+                        free(tokens);
+
+                        return 0;
                     }
                     break;
                     default:
@@ -217,7 +227,20 @@ int main(int argc, char *argv[])
     return 0;
 }
 
-void add_subbed_topic(uint8_t id, char *topic_name)
+comm_type parse_command(int nr, char **tokens)
+{
+    if (!strcmp(tokens[0], "exit") && nr == 1) {
+        return EXIT;
+    } else if (!strcmp(tokens[0], "unsubscribe") && nr == 2) {
+        return UNSUBSCRIBE;
+    } else if (!strcmp(tokens[0], "subscribe") && nr == 3) {
+        return SUBSCRIBE;
+    }
+
+    return ERR;
+}
+
+void add_subbed_topic(uint32_t id, char *topic_name)
 {
     struct topic new_topic;
     new_topic.id = id;
@@ -242,7 +265,7 @@ int get_topic_id(char *topic_name)
     return -1;
 }
 
-char *get_topic_name(uint8_t topic_id)
+char *get_topic_name(uint32_t topic_id)
 {
     ll_node_t *head = subbed_topics->head;
 
@@ -257,7 +280,7 @@ char *get_topic_name(uint8_t topic_id)
     return NULL;
 }
 
-int get_topic_idx(uint8_t topic_id)
+int get_topic_idx(uint32_t topic_id)
 {
 	ll_node_t *head = subbed_topics->head;
 	int idx = 0;
@@ -300,7 +323,7 @@ int verify_id(char *id, int tcp_sockfd)
     if (res.opcode == (uint8_t) ERR) {
         free(id);
         return -1;
-    } else if(res.option == (uint8_t) 1) {
+    } else if(res.option == 1) {
         int topics_no, tot_len;
         char header[sizeof(topics_no) + sizeof(tot_len)];
         char buf[BUFSIZ];
@@ -341,7 +364,7 @@ int verify_id(char *id, int tcp_sockfd)
     return 0;
 }
 
-uint8_t subscribe_topic(char *topic_name, int sf, int tcp_sockfd)
+uint32_t subscribe_topic(char *topic_name, int sf, int tcp_sockfd)
 {
     if (get_topic_idx(get_topic_id(topic_name)) != -1) {
         return -2;
@@ -353,7 +376,8 @@ uint8_t subscribe_topic(char *topic_name, int sf, int tcp_sockfd)
         return -3;
     }
 
-    if (send_all(tcp_sockfd, topic_name, strlen(topic_name) + 1) < strlen(topic_name) + 1) {
+    if (send_all(tcp_sockfd, topic_name, strlen(topic_name) + 1) <
+        strlen(topic_name) + 1) {
         fprintf(stderr, ERR_CONN);
         return -3;
     }
@@ -371,7 +395,7 @@ uint8_t subscribe_topic(char *topic_name, int sf, int tcp_sockfd)
     return sub_topic.option;
 }
 
-uint8_t unsubscribe_topic(uint8_t topic_id, int tcp_sockfd)
+uint32_t unsubscribe_topic(uint32_t topic_id, int tcp_sockfd)
 {
     if (!get_topic_name(topic_id)) {
         return -1;
@@ -399,10 +423,10 @@ void handle_incoming_msgs(char *buf, int msgs_no, int tot_len)
         char content[server_msg.buf_len];
         memcpy(content, buf + offset + sizeof(server_msg), server_msg.buf_len);
 
-        if (!inet_ntop(AF_INET, &server_msg.ip_addr, ip_addr, sizeof(struct sockaddr_in))) {
+        if (!inet_ntop(AF_INET, &server_msg.ip_addr,
+                       ip_addr, sizeof(struct sockaddr_in))) {
             fprintf(stderr, "inet_ntop() failed. Message display may be affected\n");
         }
-
 
         uint16_t ntoh_port = ntohs(server_msg.port);
         switch (server_msg.data_type) {

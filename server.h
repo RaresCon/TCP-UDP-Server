@@ -10,23 +10,47 @@
 
 #define ERR_CONN "The client closed connection\n"
 
+#define CONN_STR "New client %s connected from %s:%d.\n"
+#define DCONN_STR "Client %s disconnected.\n"
+
+/*
+ * @extends comm_type with private commands for server admin
+ */
+typedef enum admin_comm_type {
+    ERR_ADMIN = -2,               /* Error code */
+    EXIT_ADMIN = 1,               /* Exit code */
+    SHOW_TOPICS = 5,              /* Show stored topics code */
+    SHOW_CLIENTS,                 /* Show stored clients code */
+} admin_comm_type;
+
 struct subbed_topic {
-uint8_t sf;                       /* Store-and-Forward flag */
+    uint8_t sf;                   /* Store-and-Forward flag */
     struct topic info;            /* info about the subscribed topic */
 } __attribute__((__packed__));
 
 struct client {
-    char id[11];                  /* id of the client */
-    uint32_t fd;                  /* current fd of the client */
-    uint8_t conned;               /* connection flag */
-    linked_list_t *client_topics; /* list of subscribed topics */
-    linked_list_t *msg_queue;     /* list of stored messages */
+    char id[11];                  /* Id of the client */
+    uint32_t fd;                  /* Current fd of the client */
+    uint8_t conned;               /* Connection flag */
+    linked_list_t *client_topics; /* List of subscribed topics */
+    linked_list_t *msg_queue;     /* List of stored messages */
 };
 
 struct message_t {
-    struct message_hdr header;    /* header of a message */
-    char buf[1501];               /* the message */
+    struct message_hdr header;    /* Header of a message */
+    char buf[1501];               /* The message */
 };
+
+
+/*
+ * @brief Function to parse an admin command 
+ * 
+ * @param nr the number of tokens
+ * @param tokens the array of tokens 
+ * 
+ * @return the command type if the command is valid, ERR otherwise
+ */
+admin_comm_type parse_command(int nr, char **tokens);
 
 
 /*
@@ -70,7 +94,8 @@ void send_msgs(struct client *curr_client, linked_list_t *msgs);
  * 
  * @return pointer to the message structure
  */
-struct message_t *parse_msg(int ip, int port, uint8_t data_type, int topic_id, char *buf);
+struct message_t *parse_msg(int ip, int port, uint8_t data_type,
+                            int topic_id, char *buf);
 
 
 /*
@@ -119,7 +144,7 @@ int add_new_topic(char *topic_name);
  * @return the id of the topic or -1 if there is no
  * topic registered on the server with the given name
  */
-uint8_t get_topic_id(char *topic_name);
+uint32_t get_topic_id(char *topic_name);
 
 
 /*
@@ -132,7 +157,7 @@ uint8_t get_topic_id(char *topic_name);
  * @return the index of the requested topic in the subscribed
  * topics list or -1 if there is no subscribed topic with that id in the list
  */
-int get_topic_idx(linked_list_t *client_topics, uint8_t topic_id);
+int get_topic_idx(linked_list_t *client_topics, uint32_t topic_id);
 
 
 /*
@@ -143,7 +168,7 @@ int get_topic_idx(linked_list_t *client_topics, uint8_t topic_id);
  * 
  * @return the Store-and-Forward flag
  */
-uint8_t get_topic_sf(linked_list_t *client_topics, uint8_t topic_id);
+uint8_t get_topic_sf(linked_list_t *client_topics, uint32_t topic_id);
 
 
 /*
@@ -173,4 +198,27 @@ void sub_client(struct client *curr_client, uint8_t sf, char *topic_name);
  * @param curr_client the client that requested the unsubscribe
  * @param topic_id the topic's id to be unsubscribed from
  */
-void unsub_client(struct client *curr_client, uint8_t topic_id);
+void unsub_client(struct client *curr_client, uint32_t topic_id);
+
+
+/*
+ * @brief Function to display registered topics and their id
+ */
+void show_topics();
+
+
+/*
+ * @brief Function to display registered users and their topics
+ */
+void show_clients();
+
+
+/*
+ * @brief Function to hash a string (used primarly for topics)
+ * Found on https://web.archive.org/web/20190108202303/http://www.hackersdelight.org/hdcodetxt/crc.c.txt
+ * 
+ * @param message string to be hashed
+ * 
+ * @return the hash of the string as `uint32_t`
+ */
+uint32_t crc32_hash(unsigned char *message);
